@@ -1,6 +1,6 @@
 # core/db_scanner.py
 import pymysql
-from models.data_models import ScanResult
+from models.data_models import ScanResult, ScanSummary
 from utils.regex_utils import extract_secrets_from_text
 
 class DBScanner:
@@ -17,10 +17,10 @@ class DBScanner:
             'cursorclass': pymysql.cursors.DictCursor 
         }
 
-    def scan(self) -> tuple[list[ScanResult], dict]:
+    def scan(self) -> ScanSummary:
         """
         执行全库扫描。
-        返回: (涉密结果列表, 扫描统计信息字典)
+        返回: ScanSummary 对象
         """
         results = []
         stats = {
@@ -80,7 +80,13 @@ class DBScanner:
             if 'connection' in locals() and connection.open:
                 connection.close()
 
-        return results, stats
+        return ScanSummary(
+            task_name="数据库深度检查",
+            total_scanned=stats["table_count"],
+            total_secrets=len(results),
+            scanned_details=stats["table_details"],
+            results=results
+        )
 
     def _get_text_columns(self, cursor, db_name, table_name) -> list[str]:
         """内部方法：查字典表，仅提取可能包含涉密文字的文本类字段"""

@@ -3,7 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from collections import deque
-from models.data_models import ScanResult
+from models.data_models import ScanResult, ScanSummary
 from utils.regex_utils import extract_secrets_from_text
 
 class WebScanner:
@@ -24,7 +24,7 @@ class WebScanner:
         # 提取目标主域名 (例如 bm.yangyq.net)，用于同源策略限制
         self.base_domain = urlparse(self.start_url).netloc
 
-    def scan(self) -> list[ScanResult]:
+    def scan(self) -> ScanSummary:
         results = []
         # 使用队列实现 BFS (广度优先搜索)
         # 队列中存放元组: (当前URL, 当前深度)
@@ -93,4 +93,10 @@ class WebScanner:
                 # 网页打不开很正常，打印警告但不让程序崩溃
                 print(f"⚠️ 无法访问 {current_url}: {e}")
 
-        return results
+        return ScanSummary(
+            task_name="网页动态爬虫检查",
+            total_scanned=len(self.visited),
+            total_secrets=len(results),
+            scanned_details={"抓取网页数": len(self.visited)},
+            results=results
+        )

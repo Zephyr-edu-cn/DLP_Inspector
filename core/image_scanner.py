@@ -3,6 +3,7 @@ import os
 import logging
 from paddleocr import PaddleOCR
 from models.data_models import ScanResult
+from models.data_models import ScanSummary
 from utils.regex_utils import extract_secrets_from_text
 
 logging.disable(logging.DEBUG)  # 禁止PaddleOCR的调试日志输出
@@ -14,7 +15,7 @@ class ImageScanner:
         self.ocr = PaddleOCR(use_angle_cls=True, lang='ch', show_log=False, use_gpu=True)  # 只加载中文模型，禁用日志
         self.supported_exts = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
 
-    def scan_path(self, target_path) -> list[ScanResult]:
+    def scan_path(self, target_path) -> ScanSummary:
         results = []
         files_to_scan = []
 
@@ -64,4 +65,16 @@ class ImageScanner:
             except Exception as e:
                 print(f"图片 [{os.path.basename(file_path)}] 解析失败: {e}")
         
-        return results
+        # 统计图片类型分布
+        ext_counts = {}
+        for f in files_to_scan:
+            ext = os.path.splitext(f)[1].lower()
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+
+        return ScanSummary(
+            task_name="图片离线 OCR 检查",
+            total_scanned=len(files_to_scan),
+            total_secrets=len(results),
+            scanned_details=ext_counts,
+            results=results
+        )

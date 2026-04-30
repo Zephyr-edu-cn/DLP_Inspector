@@ -20,3 +20,6 @@ paddleocr==2.8.1
 python-magic-bin==0.4.14    
 # 如果你是 Mac/Linux，请保留上面的注释，取消下面这行的注释
 # python-magic==0.4.27
+
+# 数据处理和Excel输出
+pandas openpyxl
