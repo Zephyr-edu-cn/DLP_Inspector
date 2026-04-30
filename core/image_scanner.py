@@ -12,7 +12,7 @@ class ImageScanner:
     def __init__(self):
         """初始化OCR模型"""
         print("正在初始化AI视觉识别模型 (PaddleOCR)，请稍候...")
-        self.ocr = PaddleOCR(use_angle_cls=True, lang='ch', show_log=False, use_gpu=True)  # 只加载中文模型，禁用日志
+        self.ocr = PaddleOCR(use_angle_cls=True, lang='ch', show_log=False, use_gpu=False)  # 只加载中文模型，禁用日志
         self.supported_exts = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
 
     def scan_path(self, target_path) -> ScanSummary:
