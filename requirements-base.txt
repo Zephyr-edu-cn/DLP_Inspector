@@ -1,31 +1,37 @@
-# Word文档解析
+# Word document parsing
 python-docx==1.1.0
-# excel、ppt、pdf等文件解析
-openpyxl==3.1.2 python-pptx==0.6.23 PyMuPDF==1.23.8
-# 老版本.xls .doc .ppt
-xlrd==2.0.1 pywin32 olefile
 
-# 文件类型探测（防后缀名伪装，Phase 2使用）
-# 注意：如果你是 Windows 系统，请取消下面这行的注释并使用它
+# Excel / PPT / PDF parsing
+openpyxl==3.1.2
+python-pptx==0.6.23
+PyMuPDF==1.23.8
+
+# Legacy Office formats: .xls / .doc / .ppt
+xlrd==2.0.1
+pywin32
+olefile
+
+# File type detection
+# Windows:
 python-magic-bin==0.4.14
-# 如果你是 Mac/Linux，请保留上面的注释，取消下面这行的注释
+# macOS / Linux:
 # python-magic==0.4.27
 
-# MYSQL驱动
+# MySQL driver
 pymysql==1.1.0
 
-# 网页爬取
-requests beautifulsoup4
+# Web crawling
+requests
+beautifulsoup4
 
-# PaddleOCR（文字识别）
-paddlepaddle-gpu==2.6.1
+# OCR frontend
 paddleocr==2.8.1
 
-# 数据处理和Excel输出
-pandas openpyxl
+# Data processing and Excel report export
+pandas
 
-# GUI界面
+# GUI
 customtkinter
 
-# 打包
+# Packaging
 pyinstaller
