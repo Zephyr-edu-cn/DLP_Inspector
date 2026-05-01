@@ -1,0 +1,4 @@
+-r requirements-base.txt
+
+# PaddleOCR runtime: GPU version for development environment
+paddlepaddle-gpu==2.6.1

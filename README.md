@@ -91,3 +91,16 @@ DLP_INSPECTOR/
 
 ---
 *Generated for DLP Inspector - Enterprise Data Security Auditing Project.*
+## OCR 运行环境
+
+项目默认使用 CPU 版 PaddleOCR 依赖，便于打包部署并降低 CUDA / GPU 驱动环境要求。当前 `core/image_scanner.py` 中 `use_gpu=False`，与默认依赖保持一致。
+
+普通安装或打包部署：
+
+    pip install -r requirements.txt
+
+具备 CUDA 环境的开发机可安装 GPU 版本依赖：
+
+    pip install -r requirements-gpu.txt
+
+GPU 版本需要匹配的 CUDA / cuDNN / 显卡驱动环境；若仅使用打包版或普通本地运行，使用默认 `requirements.txt` 即可。
