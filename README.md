@@ -8,6 +8,30 @@
 
 ---
 
+## 界面预览
+
+### 本地文件深度检查
+
+![File Scan](assets/ui_file_scan.png)
+
+### 数据库穿透扫描
+
+![Database Scan](assets/ui_db_scan.png)
+
+### 网页动态爬虫
+
+![Web Scan](assets/ui_web_scan.png)
+
+### AI 图像涉密识别
+
+![Image OCR Scan](assets/ui_image_scan.png)
+
+### 审计报告导出
+
+![Report Preview](assets/report_preview.png)
+
+---
+
 ## 核心功能模块
 
 系统底层采用模块化设计，集成四类审查引擎：
@@ -72,33 +96,18 @@ DLP_INSPECTOR/
 ├── utils/                 # 公共工具函数
 │   └── regex_utils.py     # 敏感词正则构建与匹配工具
 ├── config/                # 配置与敏感词规则
-├── assets/                # 项目截图与展示素材（可选）
+├── assets/                # 项目截图与展示素材
+│   ├── ui_file_scan.png
+│   ├── ui_db_scan.png
+│   ├── ui_web_scan.png
+│   ├── ui_image_scan.png
+│   └── report_preview.png
 ├── dist/                  # PyInstaller 打包输出目录，本地构建生成
 ├── run.py                 # 项目启动入口
 ├── requirements.txt       # 默认 CPU 运行依赖
+├── requirements-base.txt  # 通用依赖
 ├── requirements-gpu.txt   # GPU 开发环境依赖
 └── README.md
-```
-
----
-
-## 界面预览
-
-建议将 GUI 截图保存到 `assets/` 目录，并按需在 README 中展示：
-
-```text
-assets/ui_file_scan.png
-assets/ui_db_scan.png
-assets/ui_web_scan.png
-assets/ui_ocr_scan.png
-assets/report_preview.png
-```
-
-示例：
-
-```markdown
-![File Scanner UI](assets/ui_file_scan.png)
-![Report Preview](assets/report_preview.png)
 ```
 
 ---
