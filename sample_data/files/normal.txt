@@ -1,0 +1,2 @@
+This is a normal public document for smoke testing.
+It should not trigger confidentiality audit rules.

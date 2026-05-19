@@ -67,7 +67,11 @@ class FileScanner:
                     source_path=display_path,
                     keyword="[状态异常]",
                     line_number="文件属性",
-                    context="系统底层检测到该文件被用户刻意隐藏，可能存在规避检查的嫌疑，建议人工核查。"
+                    context="系统底层检测到该文件被用户刻意隐藏，可能存在规避检查的嫌疑，建议人工核查。",
+                    rule_id="SYSTEM_HIDDEN_FILE",
+                    rule_name="隐藏文件提示",
+                    risk_level="medium",
+                    rule_description="隐藏文件属性提示，需人工确认是否存在规避检查行为。"
                 ))
             else:
                 all_results.extend(file_results)
@@ -123,7 +127,11 @@ class FileScanner:
                         source_path=display_path,
                         keyword=secret['keyword'],
                         line_number=str(secret['line_number']),
-                        context=secret['context']
+                        context=secret['context'],
+                        rule_id=secret.get('rule_id', ''),
+                        rule_name=secret.get('rule_name', ''),
+                        risk_level=secret.get('risk_level', ''),
+                        rule_description=secret.get('rule_description', '')
                     )
                     results.append(result)
         except Exception as e:
@@ -139,6 +147,10 @@ class FileScanner:
                     keyword="[加密文档]",
                     line_number="文档受保护",
                     context="【高危告警】检测到该文件使用了密码加密，系统无法读取内容。建议重点关注并索要密码核查。",
+                    rule_id="SYSTEM_ENCRYPTED_FILE",
+                    rule_name="加密文档提示",
+                    risk_level="high",
+                    rule_description="加密或受保护文档无法直接读取，需要人工复核。",
                     is_encrypted=True
                 ))
             else:

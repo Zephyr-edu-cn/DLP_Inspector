@@ -10,6 +10,10 @@ class ScanResult:
     keyword: str         
     line_number: str     
     context: str         
+    rule_id: str = ""
+    rule_name: str = ""
+    risk_level: str = ""
+    rule_description: str = ""
     error_msg: str = ""        # 防止解析加密文件时报错崩溃
     is_encrypted: bool = False
 

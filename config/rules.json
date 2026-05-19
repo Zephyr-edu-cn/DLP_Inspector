@@ -1,0 +1,58 @@
+[
+  {
+    "rule_id": "CONF_KEYWORD_SENSITIVE",
+    "name": "涉密关键词",
+    "pattern": "涉密",
+    "type": "keyword",
+    "risk_level": "high",
+    "description": "命中常见保密审计关键词：涉密。"
+  },
+  {
+    "rule_id": "CONF_KEYWORD_SECRET",
+    "name": "秘密关键词",
+    "pattern": "秘密",
+    "type": "keyword",
+    "risk_level": "high",
+    "description": "命中常见密级标识关键词：秘密。"
+  },
+  {
+    "rule_id": "CONF_KEYWORD_CONFIDENTIAL",
+    "name": "机密关键词",
+    "pattern": "机密",
+    "type": "keyword",
+    "risk_level": "high",
+    "description": "命中常见密级标识关键词：机密。"
+  },
+  {
+    "rule_id": "CONF_KEYWORD_TOP_SECRET",
+    "name": "绝密关键词",
+    "pattern": "绝密",
+    "type": "keyword",
+    "risk_level": "critical",
+    "description": "命中常见密级标识关键词：绝密。"
+  },
+  {
+    "rule_id": "CONF_KEYWORD_PROTECT",
+    "name": "保密关键词",
+    "pattern": "保密",
+    "type": "keyword",
+    "risk_level": "medium",
+    "description": "命中常见保密管理关键词：保密。"
+  },
+  {
+    "rule_id": "CONF_KEYWORD_LEAK",
+    "name": "泄密关键词",
+    "pattern": "泄密",
+    "type": "keyword",
+    "risk_level": "high",
+    "description": "命中常见泄密风险关键词：泄密。"
+  },
+  {
+    "rule_id": "CONF_REGEX_CLASSIFICATION_MARK",
+    "name": "密级格式标识",
+    "pattern": "(秘密|机密|绝密)\\s*[★☆-]?\\s*(启用前|资料|文件)?",
+    "type": "regex",
+    "risk_level": "critical",
+    "description": "识别类似“绝密★启用前”的密级格式标识。"
+  }
+]

@@ -73,7 +73,11 @@ class WebScanner:
                             source_path=current_url, # 来源直接写出问题的网址
                             keyword=secret['keyword'],
                             line_number=f"网页第{line_num}行",
-                            context=secret['context']
+                            context=secret['context'],
+                            rule_id=secret.get('rule_id', ''),
+                            rule_name=secret.get('rule_name', ''),
+                            risk_level=secret.get('risk_level', ''),
+                            rule_description=secret.get('rule_description', '')
                         ))
 
                 # 如果还没达到最大深度，就继续挖当前页面的超链接

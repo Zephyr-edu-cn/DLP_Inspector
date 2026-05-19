@@ -11,7 +11,7 @@ logging.disable(logging.DEBUG)  # 禁止PaddleOCR的调试日志输出
 class ImageScanner:
     def __init__(self):
         """初始化OCR模型"""
-        print("正在初始化AI视觉识别模型 (PaddleOCR)，请稍候...")
+        print("正在初始化 OCR 识别模型 (PaddleOCR)，请稍候...")
         self.ocr = PaddleOCR(use_angle_cls=True, lang='ch', show_log=False, use_gpu=False)  # 只加载中文模型，禁用日志
         self.supported_exts = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
 
@@ -60,7 +60,11 @@ class ImageScanner:
                                 source_path=file_path,
                                 keyword=secret['keyword'],
                                 line_number=f"图片文本块 [{idx}]",
-                                context=secret['context']
+                                context=secret['context'],
+                                rule_id=secret.get('rule_id', ''),
+                                rule_name=secret.get('rule_name', ''),
+                                risk_level=secret.get('risk_level', ''),
+                                rule_description=secret.get('rule_description', '')
                             ))
             except Exception as e:
                 print(f"图片 [{os.path.basename(file_path)}] 解析失败: {e}")

@@ -1,57 +1,161 @@
 # utils/regex_utils.py
+import json
 import re
+from pathlib import Path
+from typing import Any
 
-# 题目要求检测的基准关键字
-SECRET_KEYWORDS = ["涉密", "秘密", "机密", "绝密", "保密", "泄密"]
+RULES_PATH = Path(__file__).resolve().parents[1] / "config" / "rules.json"
 
-def build_fuzzy_pattern(keywords: list[str]) -> re.Pattern:
+DEFAULT_RULES = [
+    {
+        "rule_id": "CONF_KEYWORD_SENSITIVE",
+        "name": "涉密关键词",
+        "pattern": "涉密",
+        "type": "keyword",
+        "risk_level": "high",
+        "description": "命中常见保密审计关键词：涉密。"
+    },
+    {
+        "rule_id": "CONF_KEYWORD_SECRET",
+        "name": "秘密关键词",
+        "pattern": "秘密",
+        "type": "keyword",
+        "risk_level": "high",
+        "description": "命中常见密级标识关键词：秘密。"
+    },
+    {
+        "rule_id": "CONF_KEYWORD_CONFIDENTIAL",
+        "name": "机密关键词",
+        "pattern": "机密",
+        "type": "keyword",
+        "risk_level": "high",
+        "description": "命中常见密级标识关键词：机密。"
+    },
+    {
+        "rule_id": "CONF_KEYWORD_TOP_SECRET",
+        "name": "绝密关键词",
+        "pattern": "绝密",
+        "type": "keyword",
+        "risk_level": "critical",
+        "description": "命中常见密级标识关键词：绝密。"
+    },
+    {
+        "rule_id": "CONF_KEYWORD_PROTECT",
+        "name": "保密关键词",
+        "pattern": "保密",
+        "type": "keyword",
+        "risk_level": "medium",
+        "description": "命中常见保密管理关键词：保密。"
+    },
+    {
+        "rule_id": "CONF_KEYWORD_LEAK",
+        "name": "泄密关键词",
+        "pattern": "泄密",
+        "type": "keyword",
+        "risk_level": "high",
+        "description": "命中常见泄密风险关键词：泄密。"
+    },
+]
+
+
+def _keyword_to_fuzzy_pattern(keyword: str) -> str:
     """
-    将基准关键字转换为支持模糊匹配的正则表达式。
-    原理：在每个汉字之间插入 [\\s\\W_]* ，代表允许有任意多个空格、标点符号或特殊字符。
+    将关键词转换为模糊匹配正则。
     例如: '绝密' -> '绝[\\s\\W_]*密'
     """
-    patterns = []
-    for kw in keywords:
-        # list(kw) 会把 "绝密" 变成 ['绝', '密']
-        # join 后变成 "绝[\s\W_]*密"
-        fuzzy_kw = r"[\s\W_]*".join(list(kw))
-        patterns.append(fuzzy_kw)
+    return r"[\s\W_]*".join(re.escape(ch) for ch in keyword)
 
-    # 用 | (或) 将所有关键字正则拼接起来，加上括号作为一个整体捕获组
-    combined_pattern = f"({'|'.join(patterns)})"
-    
-    # 预编译为正则对象，极大提升海量文本匹配时的效率
-    return re.compile(combined_pattern)
 
-# 全局单例的正则匹配引擎，只在模块导入时编译一次
-SECRET_PATTERN = build_fuzzy_pattern(SECRET_KEYWORDS)
+def _normalize_rule(raw_rule: dict[str, Any], index: int) -> dict[str, Any] | None:
+    pattern = str(raw_rule.get("pattern", "")).strip()
+    if not pattern:
+        return None
 
-def extract_secrets_from_text(text: str, line_num: str | int) -> list[dict]:
+    rule_type = str(raw_rule.get("type", "keyword")).strip().lower()
+    if rule_type not in {"keyword", "regex"}:
+        rule_type = "keyword"
+
+    return {
+        "rule_id": str(raw_rule.get("rule_id") or f"RULE_{index:03d}"),
+        "name": str(raw_rule.get("name") or raw_rule.get("rule_id") or f"Rule {index}"),
+        "pattern": pattern,
+        "type": rule_type,
+        "risk_level": str(raw_rule.get("risk_level") or "medium"),
+        "description": str(raw_rule.get("description") or ""),
+    }
+
+
+def load_rules(path: str | Path | None = None) -> list[dict[str, Any]]:
+    """Load audit rules from JSON config, falling back to built-in defaults."""
+    rules_file = Path(path) if path else RULES_PATH
+    try:
+        raw_rules = json.loads(rules_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw_rules = DEFAULT_RULES
+
+    rules = []
+    for index, raw_rule in enumerate(raw_rules, start=1):
+        if not isinstance(raw_rule, dict):
+            continue
+        rule = _normalize_rule(raw_rule, index)
+        if rule:
+            rules.append(rule)
+
+    return rules or DEFAULT_RULES
+
+
+def compile_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Compile keyword and regex rules into regex objects."""
+    compiled_rules = []
+    for rule in rules:
+        pattern_text = rule["pattern"]
+        if rule["type"] == "keyword":
+            pattern_text = _keyword_to_fuzzy_pattern(pattern_text)
+
+        try:
+            compiled_pattern = re.compile(pattern_text)
+        except re.error:
+            continue
+
+        compiled_rule = dict(rule)
+        compiled_rule["compiled_pattern"] = compiled_pattern
+        compiled_rules.append(compiled_rule)
+
+    return compiled_rules
+
+
+COMPILED_RULES = compile_rules(load_rules())
+
+
+def extract_secrets_from_text(text: str, line_num: str | int) -> list[dict[str, str]]:
     """
     扫描传入的一段文本，提取所有涉密信息及其上下文。
-    返回一个字典列表，方便直接用于实例化 ScanResult。
+    返回字段可直接映射到 ScanResult。
     """
     results = []
-    # 如果传入的文本为空，直接返回
     if not text:
         return results
 
-    # finditer 可以在全文中查找所有匹配项，并保留它们在字符串中的索引位置
-    for match in SECRET_PATTERN.finditer(text):
-        found_word = match.group()
-        start_idx = match.start()
-        end_idx = match.end()
+    for rule in COMPILED_RULES:
+        pattern = rule["compiled_pattern"]
+        for match in pattern.finditer(text):
+            found_word = match.group()
+            start_idx = match.start()
+            end_idx = match.end()
 
-        # 截取上下文（前后各保留 15 个字符作为证据），并注意边界防止越界
-        context_start = max(0, start_idx - 15)
-        context_end = min(len(text), end_idx + 15)
-        # 将上下文中的换行符替换为空格，保持报告格式整洁
-        context = text[context_start:context_end].replace('\n', ' ').strip()
+            context_start = max(0, start_idx - 15)
+            context_end = min(len(text), end_idx + 15)
+            context = text[context_start:context_end].replace('\n', ' ').strip()
 
-        results.append({
-            "keyword": found_word,
-            "line_number": str(line_num),
-            "context": context
-        })
-        
+            results.append({
+                "keyword": found_word,
+                "line_number": str(line_num),
+                "context": context,
+                "rule_id": rule["rule_id"],
+                "rule_name": rule["name"],
+                "risk_level": rule["risk_level"],
+                "rule_description": rule["description"],
+                "rule_type": rule["type"],
+            })
+
     return results

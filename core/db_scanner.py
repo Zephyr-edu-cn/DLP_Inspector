@@ -71,7 +71,11 @@ class DBScanner:
                                         source_path=table, # 来源路径记为表名
                                         keyword=secret['keyword'],
                                         line_number=f"第{row_idx}行 - 字段[{col_name}]", # 位置记为行号和字段名
-                                        context=secret['context']
+                                        context=secret['context'],
+                                        rule_id=secret.get('rule_id', ''),
+                                        rule_name=secret.get('rule_name', ''),
+                                        risk_level=secret.get('risk_level', ''),
+                                        rule_description=secret.get('rule_description', '')
                                     )
                                     results.append(res)
         except pymysql.MySQLError as e:

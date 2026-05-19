@@ -22,6 +22,9 @@ audit_reports/
 *.xlsx
 *.csv
 
+# Local-only test inputs supplied outside the repo
+inputs/
+
 # =========================
 # 4. Python 缓存文件
 # =========================
