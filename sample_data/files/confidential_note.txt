@@ -1,3 +1,3 @@
 项目会议纪要：
-本文档包含涉密讨论内容，仅用于 DLP Inspector smoke test。
+本文档包含涉密讨论内容，仅用于 DLP Inspector 示例验证。
 请在导出前确认保密要求。

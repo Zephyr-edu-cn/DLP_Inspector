@@ -22,7 +22,6 @@ audit_reports/
 *.xlsx
 *.csv
 
-# Local-only test inputs supplied outside the repo
 inputs/
 
 # =========================
