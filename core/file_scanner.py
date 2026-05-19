@@ -138,7 +138,7 @@ class FileScanner:
                     source_path=display_path,
                     keyword="[加密文档]",
                     line_number="文档受保护",
-                    context="【高危告警】检测到该文件使用了密码加密，系统无法穿透读取内容。建议重点关注并索要密码核查。",
+                    context="【高危告警】检测到该文件使用了密码加密，系统无法读取内容。建议重点关注并索要密码核查。",
                     is_encrypted=True
                 ))
             else:

@@ -72,7 +72,7 @@ class ImageScanner:
             ext_counts[ext] = ext_counts.get(ext, 0) + 1
 
         return ScanSummary(
-            task_name="图片离线 OCR 检查",
+            task_name="图片 OCR 敏感信息扫描",
             total_scanned=len(files_to_scan),
             total_secrets=len(results),
             scanned_details=ext_counts,

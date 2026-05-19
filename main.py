@@ -57,13 +57,13 @@ class DLPScannerApp(ctk.CTk):
         self.btn_file = ctk.CTkButton(self.sidebar_frame, text="文件深度检查", command=lambda: self.switch_mode("FILE"))
         self.btn_file.grid(row=1, column=0, padx=20, pady=10)
 
-        self.btn_db = ctk.CTkButton(self.sidebar_frame, text="数据库穿透扫描", command=lambda: self.switch_mode("DB"))
+        self.btn_db = ctk.CTkButton(self.sidebar_frame, text="数据库文本字段审计", command=lambda: self.switch_mode("DB"))
         self.btn_db.grid(row=2, column=0, padx=20, pady=10)
 
-        self.btn_web = ctk.CTkButton(self.sidebar_frame, text="网页动态爬虫", command=lambda: self.switch_mode("WEB"))
+        self.btn_web = ctk.CTkButton(self.sidebar_frame, text="Web 静态页面扫描", command=lambda: self.switch_mode("WEB"))
         self.btn_web.grid(row=3, column=0, padx=20, pady=10)
 
-        self.btn_img = ctk.CTkButton(self.sidebar_frame, text="AI 图像涉密识别", command=lambda: self.switch_mode("IMAGE"))
+        self.btn_img = ctk.CTkButton(self.sidebar_frame, text="图片 OCR 敏感信息扫描", command=lambda: self.switch_mode("IMAGE"))
         self.btn_img.grid(row=4, column=0, padx=20, pady=10)
 
         # 构建导航按钮组，便于在执行扫描任务时统一进行并发锁定
@@ -268,7 +268,7 @@ class DLPScannerApp(ctk.CTk):
         """审计数据可视化映射器：对 ScanSummary 进行终端矩阵化展示"""
         self.log_to_terminal("\n" + "="*55)
         self.log_to_terminal(f"审计任务: {summary.task_name}")
-        self.log_to_terminal(f"扫描穿透总数: {summary.total_scanned}")
+        self.log_to_terminal(f"扫描对象总数: {summary.total_scanned}")
         self.log_to_terminal(f"捕获涉密/异常告警: {summary.total_secrets} 条", is_danger=(summary.total_secrets > 0))
         self.log_to_terminal("="*55 + "\n")
 

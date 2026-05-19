@@ -15,4 +15,4 @@ if __name__ == "__main__":
     app.mainloop()
 
 
-# pyinstaller -D --name "DLP_DeepWatcher" --collect-all Cython --collect-all paddle --collect-all paddleocr --collect-all customtkinter --collect-all skimage --collect-all imgaug --collect-all lmdb --hidden-import pyclipper --hidden-import shapely --copy-metadata imageio --copy-metadata imgaug run.py
+# Packaging notes are maintained in docs/packaging.md.

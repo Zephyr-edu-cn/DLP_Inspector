@@ -81,7 +81,7 @@ class DBScanner:
                 connection.close()
 
         return ScanSummary(
-            task_name="数据库深度检查",
+            task_name="数据库文本字段审计",
             total_scanned=stats["table_count"],
             total_secrets=len(results),
             scanned_details=stats["table_details"],

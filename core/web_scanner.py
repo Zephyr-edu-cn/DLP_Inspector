@@ -94,7 +94,7 @@ class WebScanner:
                 print(f"⚠️ 无法访问 {current_url}: {e}")
 
         return ScanSummary(
-            task_name="网页动态爬虫检查",
+            task_name="Web 静态页面扫描",
             total_scanned=len(self.visited),
             total_secrets=len(results),
             scanned_details={"抓取网页数": len(self.visited)},
