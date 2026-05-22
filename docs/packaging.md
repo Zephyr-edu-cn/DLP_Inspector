@@ -29,7 +29,7 @@ pip install -r requirements.txt
 pip install -r requirements-gpu.txt
 ```
 
-注意：如果打包目标是普通展示或测试环境，优先使用 CPU 包，避免 GPU 运行时、驱动和动态库带来的额外不确定性。打包产物中不应混入与实际口径不一致的 GPU 依赖。
+注意：如果打包目标是普通展示或测试环境，优先使用 CPU 包，避免 GPU 运行时、驱动和动态库带来的额外不确定性。打包产物中不应混入与实际运行方式不一致的 GPU 依赖。
 
 ## PyInstaller 打包
 
