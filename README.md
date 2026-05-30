@@ -72,7 +72,7 @@ DLP_Inspector/
 ├── scripts/               # 本地验证脚本
 ├── ui/                    # CustomTkinter GUI
 ├── utils/                 # 文件类型、文档解析、正则匹配工具
-├── main.py                # GUI 主程序副本
+├── main.py                # 兼容启动入口
 ├── run.py                 # 推荐启动入口
 ├── requirements.txt       # 默认 CPU 运行依赖
 ├── requirements-base.txt  # 通用依赖
