@@ -31,7 +31,7 @@ class DLPScannerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("DLP Inspector - 安全审计终端")
+        self.title("DLP Inspector - 审计自查工具")
         self.geometry("1050x700")
         self.minsize(800, 500)
         
