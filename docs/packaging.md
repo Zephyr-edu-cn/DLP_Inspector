@@ -6,9 +6,9 @@
 
 建议使用 Windows + Python 3.10 或 3.11 创建虚拟环境。PaddleOCR、PaddlePaddle、OpenCV、PyMuPDF、pywin32 等依赖在过新的 Python 版本上可能存在兼容性问题。
 
-```bash
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
+.\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```

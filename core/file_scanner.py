@@ -88,7 +88,7 @@ class FileScanner:
                     file_path = os.path.join(root, file_name)
                     process_file(file_path)
                     
-        # 3. 组装并返回终极统计对象
+        # 3. 组装并返回扫描统计对象
         return ScanSummary(
             task_name="本地文件深度检查",
             total_scanned=total_files,
@@ -99,11 +99,11 @@ class FileScanner:
 
     def _dispatch_file(self, file_path: str, display_path: str) -> list[ScanResult]:
         """
-        核心调度逻辑：完全依赖强大的底层透视眼，精准路由。
+        核心调度逻辑：根据真实文件类型选择对应解析器。
         """
         real_ext = get_real_extension(file_path)
         
-        # 只要透视眼看准了类型，直接分发给对应的解析器
+        # 根据真实文件类型分发给对应解析器
         if real_ext in self.parsers:
             parser_func = self.parsers[real_ext]
             return self._scan_single_file(file_path, display_path, parser_func)

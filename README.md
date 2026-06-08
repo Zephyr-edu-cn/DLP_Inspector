@@ -86,9 +86,9 @@ DLP_Inspector/
 
 建议使用 Python 3.10 或 3.11 创建虚拟环境。OCR 与部分科学计算依赖在过新的 Python 版本上可能存在兼容性问题。
 
-```bash
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python run.py
 ```
