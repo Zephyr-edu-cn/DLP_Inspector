@@ -49,20 +49,37 @@ class FileScanner:
         def process_file(file_path):
             nonlocal total_files # 使用外层变量
             total_files += 1
+            declared_ext = os.path.splitext(file_path)[1].lower()
             real_ext = get_real_extension(file_path)
             # 记录文件类型统计 (即使它不在支持的 parser 里也统计一下，方便报告展示)
             ext_counts[real_ext] = ext_counts.get(real_ext, 0) + 1
-            
+
             # 检查文件隐藏状态，并在展示路径中进行高亮标注
             hidden_status = is_file_hidden(file_path)
             display_path = f"[被隐藏的文件] {file_path}" if hidden_status else file_path
-            
+
+            system_results = []
+
+            # 后缀伪装检测：扩展名与文件头/MIME 识别结果不一致时，作为审计线索留痕
+            if declared_ext and real_ext and declared_ext != real_ext:
+                system_results.append(ScanResult(
+                    source_type="FILE",
+                    source_path=display_path,
+                    keyword="[后缀伪装]",
+                    line_number="文件类型",
+                    context=f"文件扩展名为 {declared_ext}，真实类型识别为 {real_ext}，建议人工复核是否存在规避检查行为。",
+                    rule_id="SYSTEM_EXTENSION_MISMATCH",
+                    rule_name="文件后缀与真实类型不一致",
+                    risk_level="medium",
+                    rule_description="文件扩展名与内容识别结果不一致，可能存在规避检查风险。"
+                ))
+
             # 分发解析
             file_results = self._dispatch_file(file_path, display_path)
-            
+
             # 若文件被隐藏但未发现文本层面的涉密内容，仍作为异常行为上报
             if hidden_status and not file_results:
-                all_results.append(ScanResult(
+                system_results.append(ScanResult(
                     source_type="FILE",
                     source_path=display_path,
                     keyword="[状态异常]",
@@ -73,8 +90,9 @@ class FileScanner:
                     risk_level="medium",
                     rule_description="隐藏文件属性提示，需人工确认是否存在规避检查行为。"
                 ))
-            else:
-                all_results.extend(file_results)
+
+            all_results.extend(system_results)
+            all_results.extend(file_results)
 
         # 1. 扫描单个文件
         if os.path.isfile(target_path):
