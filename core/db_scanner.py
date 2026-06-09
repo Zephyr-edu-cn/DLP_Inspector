@@ -4,8 +4,9 @@ from models.data_models import ScanResult, ScanSummary
 from utils.regex_utils import extract_secrets_from_text
 
 class DBScanner:
-    def __init__(self, host, port, user, password, database):
+    def __init__(self, host, port, user, password, database, batch_size: int = 500):
         """初始化数据库连接配置"""
+        self.batch_size = batch_size
         self.db_config = {
             'host': host,
             'port': int(port),
@@ -53,31 +54,41 @@ class DBScanner:
                     if not text_columns or row_count == 0:
                         continue
 
-                    # 3. 提取所有文本字段的数据进行扫描
+                    # 3. 分批提取文本字段进行扫描，避免大表一次性 fetchall 造成内存压力
                     cols_str = ", ".join([f"`{col}`" for col in text_columns])
-                    # 使用流式获取(fetchall在数据极大时可改为fetchmany，但本项目100条规模直接fetchall即可)
-                    cursor.execute(f"SELECT {cols_str} FROM `{table}`")
-                    rows = cursor.fetchall()
+                    offset = 0
 
-                    for row_idx, row_data in enumerate(rows, start=1):
-                        for col_name, text_value in row_data.items():
-                            if text_value: # 忽略 NULL 或空字符串
-                                # 调用通用的正则匹配引擎
-                                secrets_found = extract_secrets_from_text(str(text_value), col_name)
-                                
-                                for secret in secrets_found:
-                                    res = ScanResult(
-                                        source_type="DB",
-                                        source_path=table, # 来源路径记为表名
-                                        keyword=secret['keyword'],
-                                        line_number=f"第{row_idx}行 - 字段[{col_name}]", # 位置记为行号和字段名
-                                        context=secret['context'],
-                                        rule_id=secret.get('rule_id', ''),
-                                        rule_name=secret.get('rule_name', ''),
-                                        risk_level=secret.get('risk_level', ''),
-                                        rule_description=secret.get('rule_description', '')
-                                    )
-                                    results.append(res)
+                    while True:
+                        cursor.execute(
+                            f"SELECT {cols_str} FROM `{table}` LIMIT %s OFFSET %s",
+                            (self.batch_size, offset)
+                        )
+                        rows = cursor.fetchall()
+                        if not rows:
+                            break
+
+                        for batch_row_idx, row_data in enumerate(rows, start=1):
+                            row_idx = offset + batch_row_idx
+                            for col_name, text_value in row_data.items():
+                                if text_value: # 忽略 NULL 或空字符串
+                                    # 调用通用的正则匹配引擎
+                                    secrets_found = extract_secrets_from_text(str(text_value), col_name)
+
+                                    for secret in secrets_found:
+                                        res = ScanResult(
+                                            source_type="DB",
+                                            source_path=table, # 来源路径记为表名
+                                            keyword=secret['keyword'],
+                                            line_number=f"第{row_idx}行 - 字段[{col_name}]", # 位置记为行号和字段名
+                                            context=secret['context'],
+                                            rule_id=secret.get('rule_id', ''),
+                                            rule_name=secret.get('rule_name', ''),
+                                            risk_level=secret.get('risk_level', ''),
+                                            rule_description=secret.get('rule_description', '')
+                                        )
+                                        results.append(res)
+
+                        offset += self.batch_size
         except pymysql.MySQLError as e:
             raise ValueError(f"数据库连接或查询失败: {e}")
         finally:
