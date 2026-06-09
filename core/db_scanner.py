@@ -3,64 +3,109 @@ import pymysql
 from models.data_models import ScanResult, ScanSummary
 from utils.regex_utils import extract_secrets_from_text
 
+
+SYSTEM_DATABASES = {'information_schema', 'mysql', 'performance_schema', 'sys'}
+
+
 class DBScanner:
-    def __init__(self, host, port, user, password, database, batch_size: int = 500):
-        """初始化数据库连接配置"""
-        self.batch_size = batch_size
-        self.db_config = {
-            'host': host,
-            'port': int(port),
-            'user': user,
-            'password': password,
-            'database': database,
+    def __init__(self, host, port, user, password, database: str | None = None, batch_size: int = 500):
+        """初始化数据库连接配置。database 可为空；为空时自动扫描所有非系统库。"""
+        self.host = host
+        self.port = int(port)
+        self.user = user
+        self.password = password
+        self.database = (database or '').strip()
+        self.batch_size = max(1, int(batch_size or 500))
+
+    @staticmethod
+    def list_databases(host, port, user, password) -> list[str]:
+        """自动获取当前账号可访问的非系统数据库名。"""
+        connection = pymysql.connect(
+            host=host,
+            port=int(port),
+            user=user,
+            password=password,
+            charset='utf8mb4',
+            cursorclass=pymysql.cursors.DictCursor
+        )
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SHOW DATABASES")
+                dbs = [list(row.values())[0] for row in cursor.fetchall()]
+                return [db for db in dbs if db not in SYSTEM_DATABASES]
+        finally:
+            if connection.open:
+                connection.close()
+
+    def _connect(self, database: str | None = None):
+        config = {
+            'host': self.host,
+            'port': self.port,
+            'user': self.user,
+            'password': self.password,
             'charset': 'utf8mb4',
-            # 使用字典游标，方便通过字段名获取数据
-            'cursorclass': pymysql.cursors.DictCursor 
+            'cursorclass': pymysql.cursors.DictCursor,
         }
+        if database:
+            config['database'] = database
+        return pymysql.connect(**config)
+
+    def _quote_identifier(self, value: str) -> str:
+        """Quote MySQL identifiers. Names come from metadata, but still escape backticks defensively."""
+        return "`" + value.replace("`", "``") + "`"
 
     def scan(self) -> ScanSummary:
-        """
-        执行全库扫描。
-        返回: ScanSummary 对象
-        """
-        results = []
-        stats = {
-            "table_count": 0,
-            "total_rows_scanned": 0,
-            "table_details": {} # 记录每张表的行数
-        }
+        """执行数据库扫描；若未指定 database，则扫描所有非系统库。"""
+        databases = [self.database] if self.database else self.list_databases(self.host, self.port, self.user, self.password)
+        if not databases:
+            raise ValueError("未发现可扫描的用户数据库。")
+
+        all_results: list[ScanResult] = []
+        table_details: dict[str, int] = {}
+        total_table_count = 0
 
         try:
-            # 建立数据库连接
-            connection = pymysql.connect(**self.db_config)
+            for db_name in databases:
+                db_results, db_table_details = self._scan_database(db_name)
+                all_results.extend(db_results)
+                table_details.update(db_table_details)
+                total_table_count += len(db_table_details)
+        except pymysql.MySQLError as e:
+            raise ValueError(f"数据库连接或查询失败: {e}")
+
+        return ScanSummary(
+            task_name="数据库文本字段审计",
+            total_scanned=total_table_count,
+            total_secrets=len(all_results),
+            scanned_details=table_details,
+            results=all_results
+        )
+
+    def _scan_database(self, db_name: str) -> tuple[list[ScanResult], dict[str, int]]:
+        results: list[ScanResult] = []
+        table_details: dict[str, int] = {}
+        connection = self._connect(db_name)
+        try:
             with connection.cursor() as cursor:
-                # 1. 获取库中所有的表名
                 cursor.execute("SHOW TABLES")
                 tables = [list(row.values())[0] for row in cursor.fetchall()]
-                stats["table_count"] = len(tables)
 
-                # 2. 遍历每一张表
                 for table in tables:
-                    # 动态获取该表中所有【文本类型】的字段，极大提升效率
-                    text_columns = self._get_text_columns(cursor, self.db_config['database'], table)
-                    
-                    # 统计该表的总行数 (满足题目要求的报告细节)
-                    cursor.execute(f"SELECT COUNT(*) as count FROM `{table}`")
-                    row_count = cursor.fetchone()['count']
-                    stats["table_details"][table] = row_count
-                    stats["total_rows_scanned"] += row_count
+                    table_key = f"{db_name}.{table}"
+                    text_columns = self._get_text_columns(cursor, db_name, table)
 
-                    # 如果这张表没有文本字段，或者没有数据，直接跳过
+                    cursor.execute(f"SELECT COUNT(*) AS count FROM {self._quote_identifier(table)}")
+                    row_count = cursor.fetchone()['count']
+                    table_details[table_key] = row_count
+
                     if not text_columns or row_count == 0:
                         continue
 
-                    # 3. 分批提取文本字段进行扫描，避免大表一次性 fetchall 造成内存压力
-                    cols_str = ", ".join([f"`{col}`" for col in text_columns])
+                    cols_str = ", ".join([self._quote_identifier(col) for col in text_columns])
                     offset = 0
-
                     while True:
                         cursor.execute(
-                            f"SELECT {cols_str} FROM `{table}` LIMIT %s OFFSET %s",
+                            f"SELECT {cols_str} FROM {self._quote_identifier(table)} LIMIT %s OFFSET %s",
                             (self.batch_size, offset)
                         )
                         rows = cursor.fetchall()
@@ -70,46 +115,37 @@ class DBScanner:
                         for batch_row_idx, row_data in enumerate(rows, start=1):
                             row_idx = offset + batch_row_idx
                             for col_name, text_value in row_data.items():
-                                if text_value: # 忽略 NULL 或空字符串
-                                    # 调用通用的正则匹配引擎
-                                    secrets_found = extract_secrets_from_text(str(text_value), col_name)
+                                if text_value is None or str(text_value).strip() == "":
+                                    continue
 
-                                    for secret in secrets_found:
-                                        res = ScanResult(
-                                            source_type="DB",
-                                            source_path=table, # 来源路径记为表名
-                                            keyword=secret['keyword'],
-                                            line_number=f"第{row_idx}行 - 字段[{col_name}]", # 位置记为行号和字段名
-                                            context=secret['context'],
-                                            rule_id=secret.get('rule_id', ''),
-                                            rule_name=secret.get('rule_name', ''),
-                                            risk_level=secret.get('risk_level', ''),
-                                            rule_description=secret.get('rule_description', '')
-                                        )
-                                        results.append(res)
+                                secrets_found = extract_secrets_from_text(str(text_value), col_name)
+                                for secret in secrets_found:
+                                    results.append(ScanResult(
+                                        source_type="DB",
+                                        source_path=table_key,
+                                        keyword=secret['keyword'],
+                                        line_number=f"第{row_idx}行 - 字段[{col_name}]",
+                                        context=secret['context'],
+                                        rule_id=secret.get('rule_id', ''),
+                                        rule_name=secret.get('rule_name', ''),
+                                        risk_level=secret.get('risk_level', ''),
+                                        rule_description=secret.get('rule_description', '')
+                                    ))
 
                         offset += self.batch_size
-        except pymysql.MySQLError as e:
-            raise ValueError(f"数据库连接或查询失败: {e}")
         finally:
-            if 'connection' in locals() and connection.open:
+            if connection.open:
                 connection.close()
 
-        return ScanSummary(
-            task_name="数据库文本字段审计",
-            total_scanned=stats["table_count"],
-            total_secrets=len(results),
-            scanned_details=stats["table_details"],
-            results=results
-        )
+        return results, table_details
 
     def _get_text_columns(self, cursor, db_name, table_name) -> list[str]:
-        """内部方法：查字典表，仅提取可能包含涉密文字的文本类字段"""
+        """查字典表，仅提取可能包含涉密文字的文本类字段。"""
         query = """
-            SELECT COLUMN_NAME 
-            FROM information_schema.COLUMNS 
-            WHERE TABLE_SCHEMA = %s 
-              AND TABLE_NAME = %s 
+            SELECT COLUMN_NAME
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = %s
+              AND TABLE_NAME = %s
               AND DATA_TYPE IN ('varchar', 'text', 'char', 'longtext', 'mediumtext', 'tinytext')
         """
         cursor.execute(query, (db_name, table_name))
