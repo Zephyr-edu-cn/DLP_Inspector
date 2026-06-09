@@ -34,6 +34,106 @@ class ReportManager:
             print(f"\n生成报告时发生错误: {e}")
             return ""
 
+    def generate_combined_excel_report(self, summaries: list[ScanSummary]) -> str:
+        """生成综合检查报告：overall_summary + all_findings + all_errors + 各任务 summary。"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_name = f"DLP_Audit_综合涉密信息检查_{timestamp}.xlsx"
+        file_path = os.path.join(self.output_dir, file_name)
+
+        sheets = self._build_combined_report_sheets(summaries)
+        try:
+            self._write_with_pandas(file_path, sheets)
+            return os.path.abspath(file_path)
+        except ImportError:
+            self._write_minimal_xlsx(file_path, sheets)
+            return os.path.abspath(file_path)
+        except Exception as e:
+            print(f"\n生成综合报告时发生错误: {e}")
+            return ""
+
+    def _build_combined_report_sheets(self, summaries: list[ScanSummary]) -> dict[str, list[list[object]]]:
+        total_scanned = sum(summary.total_scanned for summary in summaries)
+        all_results = [res for summary in summaries for res in summary.results]
+        findings = [res for res in all_results if not res.error_msg]
+        errors = [res for res in all_results if res.error_msg]
+
+        overall_rows = [["metric", "value"]]
+        overall_rows.extend([
+            ["task_name", "综合涉密信息检查"],
+            ["task_count", len(summaries)],
+            ["total_scanned", total_scanned],
+            ["total_findings", len(findings)],
+            ["total_errors", len(errors)],
+        ])
+        for summary in summaries:
+            overall_rows.append([f"{summary.task_name} - scanned", summary.total_scanned])
+            overall_rows.append([f"{summary.task_name} - findings", len([r for r in summary.results if not r.error_msg])])
+            overall_rows.append([f"{summary.task_name} - errors", len([r for r in summary.results if r.error_msg])])
+            if summary.scanned_details:
+                details = "\n".join([f"{key}: {val}" for key, val in summary.scanned_details.items()])
+                overall_rows.append([f"{summary.task_name} - details", details])
+
+        finding_rows = [[
+            "task_name",
+            "source_type",
+            "source_path",
+            "location",
+            "rule_id",
+            "rule_name",
+            "risk_level",
+            "keyword",
+            "context",
+            "rule_description",
+        ]]
+        error_rows = [[
+            "task_name",
+            "source_type",
+            "source_path",
+            "location",
+            "keyword",
+            "error_msg",
+            "context",
+        ]]
+
+        for summary in summaries:
+            for res in summary.results:
+                if res.error_msg:
+                    error_rows.append([
+                        summary.task_name,
+                        res.source_type,
+                        res.source_path,
+                        res.line_number,
+                        res.keyword,
+                        res.error_msg,
+                        res.context,
+                    ])
+                else:
+                    finding_rows.append([
+                        summary.task_name,
+                        res.source_type,
+                        res.source_path,
+                        res.line_number,
+                        res.rule_id,
+                        res.rule_name,
+                        res.risk_level,
+                        res.keyword,
+                        res.context,
+                        res.rule_description,
+                    ])
+
+        sheets = {
+            "overall_summary": overall_rows,
+            "all_findings": finding_rows,
+            "all_errors": error_rows,
+        }
+
+        # 保留每个子任务的 summary，便于老师快速核对每个任务的扫描数量
+        for index, summary in enumerate(summaries, start=1):
+            sheet_name = self._safe_sheet_name(f"{index}_{summary.task_name}_summary")
+            sheets[sheet_name] = self._build_report_sheets(summary)["summary"]
+
+        return sheets
+
     def _build_report_sheets(self, summary: ScanSummary) -> dict[str, list[list[object]]]:
         findings = [res for res in summary.results if not res.error_msg]
         errors = [res for res in summary.results if res.error_msg]
@@ -200,6 +300,10 @@ class ReportManager:
     def _clean_cell(self, value: object) -> str:
         text = "" if value is None else str(value)
         return re.sub(r'[\000-\010]|[\013-\014]|[\016-\037]', '', text)
+
+    def _safe_sheet_name(self, value: str) -> str:
+        cleaned = re.sub(r'[\\/:*?"<>|\[\]]+', '_', value).strip()
+        return (cleaned or "sheet")[:31]
 
     def _safe_filename(self, value: str) -> str:
         cleaned = re.sub(r'[\\/:*?"<>|]+', '_', value)
