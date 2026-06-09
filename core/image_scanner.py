@@ -2,11 +2,11 @@
 import os
 import logging
 from paddleocr import PaddleOCR
-from models.data_models import ScanResult
-from models.data_models import ScanSummary
+from models.data_models import ScanResult, ScanSummary
 from utils.regex_utils import extract_secrets_from_text
 
 logging.disable(logging.DEBUG)  # 禁止PaddleOCR的调试日志输出
+
 
 class ImageScanner:
     def __init__(self):
@@ -15,32 +15,54 @@ class ImageScanner:
         self.ocr = PaddleOCR(use_angle_cls=True, lang='ch', show_log=False, use_gpu=False)  # 只加载中文模型，禁用日志
         self.supported_exts = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
 
+    def _build_error_summary(self, target_path: str, message: str) -> ScanSummary:
+        """Return a normal ScanSummary even when the image task cannot run."""
+        return ScanSummary(
+            task_name="图片 OCR 敏感信息扫描",
+            total_scanned=0,
+            total_secrets=0,
+            scanned_details={},
+            results=[
+                ScanResult(
+                    source_type="IMAGE",
+                    source_path=target_path,
+                    keyword="[OCR任务跳过]",
+                    line_number="-",
+                    context="-",
+                    error_msg=message
+                )
+            ]
+        )
+
     def scan_path(self, target_path) -> ScanSummary:
         results = []
         files_to_scan = []
 
         if not os.path.exists(target_path):
-            print(f"错误：路径 '{target_path}' 不存在！")
-            return []
-        
+            message = f"路径不存在: {target_path}"
+            print(f"错误：{message}")
+            return self._build_error_summary(target_path, message)
+
         if os.path.isfile(target_path):
             ext = os.path.splitext(target_path)[1].lower()
             if ext in self.supported_exts:
                 files_to_scan.append(target_path)
             else:
-                print(f"警告：文件 '{target_path}' 不是支持的图片格式，已跳过。")
-                return []
-        
+                message = f"不是支持的图片格式，已跳过: {target_path}"
+                print(f"警告：{message}")
+                return self._build_error_summary(target_path, message)
+
         elif os.path.isdir(target_path):
             for root, _, files in os.walk(target_path):
                 for file in files:
                     if os.path.splitext(file)[1].lower() in self.supported_exts:
                         files_to_scan.append(os.path.join(root, file))
-            
+
             if not files_to_scan:
-                print(f"\n警告: 文件夹中未找到支持的图片。")
-                return []
-        
+                message = f"文件夹中未找到支持的图片: {target_path}"
+                print(f"\n警告: {message}")
+                return self._build_error_summary(target_path, message)
+
         for file_path in files_to_scan:
             try:
                 ocr_result = self.ocr.ocr(file_path, cls=True)
@@ -67,8 +89,17 @@ class ImageScanner:
                                 rule_description=secret.get('rule_description', '')
                             ))
             except Exception as e:
+                error_msg = f"图片解析失败: {e}"
                 print(f"图片 [{os.path.basename(file_path)}] 解析失败: {e}")
-        
+                results.append(ScanResult(
+                    source_type="IMAGE",
+                    source_path=file_path,
+                    keyword="[OCR失败]",
+                    line_number="-",
+                    context="-",
+                    error_msg=error_msg
+                ))
+
         # 统计图片类型分布
         ext_counts = {}
         for f in files_to_scan:
@@ -78,7 +109,7 @@ class ImageScanner:
         return ScanSummary(
             task_name="图片 OCR 敏感信息扫描",
             total_scanned=len(files_to_scan),
-            total_secrets=len(results),
+            total_secrets=len([r for r in results if not r.error_msg]),
             scanned_details=ext_counts,
             results=results
         )

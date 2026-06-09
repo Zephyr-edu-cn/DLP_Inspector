@@ -259,23 +259,31 @@ class DLPScannerApp(ctk.CTk):
         """优化后的矩阵显示逻辑，增强条目区分度"""
         self.log_to_terminal("\n" + "="*55)
         self.log_to_terminal(f"审计任务: {summary.task_name}")
+        error_count = len([res for res in summary.results if res.error_msg])
         self.log_to_terminal(f"扫描对象总数: {summary.total_scanned}")
         self.log_to_terminal(f"捕获涉密/异常告警: {summary.total_secrets} 条", is_danger=(summary.total_secrets > 0))
+        self.log_to_terminal(f"解析/访问异常: {error_count} 条", is_warning=(error_count > 0))
         self.log_to_terminal("="*55 + "\n")
 
         if summary.total_secrets == 0:
-            self.log_to_terminal("安全区：未检测到任何涉密违规特征。")
-            return
+            if error_count > 0:
+                self.log_to_terminal("未检测到涉密违规特征，但存在解析/访问异常，建议导出报告后人工复核。", is_warning=True)
+            else:
+                self.log_to_terminal("安全区：未检测到任何涉密违规特征。")
 
         limit = 30 # 适当增加显示上限
-        for i, res in enumerate(summary.results[:limit], start=1):
+        displayed = 0
+        for res in summary.results:
             if res.error_msg:
                 continue # 终端仅展示有效告警，减少杂音
+            displayed += 1
+            if displayed > limit:
+                break
             
             # 条目头部：带序号和来源
             is_high_risk = any(k in res.keyword for k in ["加密", "异常", "状态"])
             
-            self.log_to_terminal(f"[{i:02d}] ------------------------------------------", is_danger=is_high_risk)
+            self.log_to_terminal(f"[{displayed:02d}] ------------------------------------------", is_danger=is_high_risk)
             self.log_to_terminal(f"来源: {res.source_path}")
             self.log_to_terminal(f"位置: {res.line_number} | 特征: {res.keyword}", is_warning=True)
             self.log_to_terminal(f"证据: {res.context[:100]}...")

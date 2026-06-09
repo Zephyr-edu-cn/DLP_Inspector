@@ -94,13 +94,22 @@ class WebScanner:
                             queue.append((next_url, depth + 1))
 
             except Exception as e:
-                # 网页打不开很正常，打印警告但不让程序崩溃
+                # 网页打不开很正常，但需要进入审计报告的 errors sheet，避免异常静默丢失
+                error_msg = f"无法访问网页: {e}"
                 print(f"⚠️ 无法访问 {current_url}: {e}")
+                results.append(ScanResult(
+                    source_type="WEB",
+                    source_path=current_url,
+                    keyword="[无法访问]",
+                    line_number="-",
+                    context="-",
+                    error_msg=error_msg
+                ))
 
         return ScanSummary(
             task_name="Web 静态页面扫描",
             total_scanned=len(self.visited),
-            total_secrets=len(results),
+            total_secrets=len([r for r in results if not r.error_msg]),
             scanned_details={"抓取网页数": len(self.visited)},
             results=results
         )
