@@ -2,9 +2,11 @@
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 RULES_PATH = Path(__file__).resolve().parents[1] / "config" / "rules.json"
+DEFAULT_KEYWORDS = ["涉密", "秘密", "机密", "绝密", "保密", "泄密"]
+DEFAULT_KEYWORDS_TEXT = ", ".join(DEFAULT_KEYWORDS)
 
 DEFAULT_RULES = [
     {
@@ -55,6 +57,14 @@ DEFAULT_RULES = [
         "risk_level": "high",
         "description": "命中常见泄密风险关键词：泄密。"
     },
+    {
+        "rule_id": "CONF_REGEX_CLASSIFICATION_MARK",
+        "name": "密级格式标识",
+        "pattern": r"(秘密|机密|绝密)\s*[★☆\-—_]*\s*(启用前|资料|文件)?",
+        "type": "regex",
+        "risk_level": "critical",
+        "description": "识别类似“绝密★启用前”以及带空格/符号分隔的密级标识。"
+    },
 ]
 
 
@@ -104,12 +114,80 @@ def load_rules(path: str | Path | None = None) -> list[dict[str, Any]]:
     return rules or DEFAULT_RULES
 
 
+def _split_user_rule_text(value: str | Iterable[str] | None) -> list[str]:
+    """Split GUI input text into individual keyword/regex patterns."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        chunks = re.split(r"[,，;；\n\r]+", value)
+    else:
+        chunks = list(value)
+    seen = set()
+    items = []
+    for chunk in chunks:
+        item = str(chunk).strip()
+        if item and item not in seen:
+            seen.add(item)
+            items.append(item)
+    return items
+
+
+def build_keyword_rules(keywords: str | Iterable[str] | None = None) -> list[dict[str, Any]]:
+    """Build the active keyword rule list from user-editable GUI input."""
+    keyword_items = _split_user_rule_text(keywords)
+    if not keyword_items:
+        keyword_items = DEFAULT_KEYWORDS
+
+    rules: list[dict[str, Any]] = []
+    for idx, keyword in enumerate(keyword_items, start=1):
+        risk = "critical" if keyword == "绝密" else "high" if keyword in {"涉密", "秘密", "机密", "泄密"} else "medium"
+        rules.append({
+            "rule_id": f"ACTIVE_KEYWORD_{idx:03d}",
+            "name": f"检测关键词：{keyword}",
+            "pattern": keyword,
+            "type": "keyword",
+            "risk_level": risk,
+            "description": "用户界面中当前启用的检测关键词。",
+        })
+    return rules
+
+
+def build_regex_rules(regexes: str | Iterable[str] | None = None,
+                      include_default_regex: bool = True) -> list[dict[str, Any]]:
+    """Build regex rules from JSON default regex rules plus GUI-entered regexes."""
+    rules: list[dict[str, Any]] = []
+    if include_default_regex:
+        for raw_rule in load_rules():
+            if str(raw_rule.get("type", "")).lower() == "regex":
+                rules.append(raw_rule)
+
+    for idx, pattern in enumerate(_split_user_rule_text(regexes), start=1):
+        rules.append({
+            "rule_id": f"USER_REGEX_{idx:03d}",
+            "name": f"用户自定义正则 {idx}",
+            "pattern": pattern,
+            "type": "regex",
+            "risk_level": "high",
+            "description": "用户在界面中临时添加的正则检测规则。",
+        })
+    return rules
+
+
+def build_custom_rules(extra_keywords: str | Iterable[str] | None = None,
+                       extra_regexes: str | Iterable[str] | None = None) -> list[dict[str, Any]]:
+    """Backward-compatible alias: build rules from GUI-entered keywords and regexes."""
+    return build_keyword_rules(extra_keywords) + build_regex_rules(extra_regexes)
+
+
 def compile_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Compile keyword and regex rules into regex objects."""
     compiled_rules = []
-    for rule in rules:
-        pattern_text = rule["pattern"]
-        if rule["type"] == "keyword":
+    for index, rule in enumerate(rules, start=1):
+        normalized = _normalize_rule(rule, index)
+        if not normalized:
+            continue
+        pattern_text = normalized["pattern"]
+        if normalized["type"] == "keyword":
             pattern_text = _keyword_to_fuzzy_pattern(pattern_text)
 
         try:
@@ -117,7 +195,7 @@ def compile_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
         except re.error:
             continue
 
-        compiled_rule = dict(rule)
+        compiled_rule = dict(normalized)
         compiled_rule["compiled_pattern"] = compiled_pattern
         compiled_rules.append(compiled_rule)
 
@@ -125,6 +203,35 @@ def compile_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 COMPILED_RULES = compile_rules(load_rules())
+
+
+def configure_runtime_rules(keywords: str | Iterable[str] | None = None,
+                            regexes: str | Iterable[str] | None = None,
+                            include_default_regex: bool = True,
+                            include_default: bool | None = None,
+                            extra_keywords: str | Iterable[str] | None = None,
+                            extra_regexes: str | Iterable[str] | None = None) -> int:
+    """
+    Rebuild the active rule set from GUI-editable keywords and optional regex rules.
+
+    keywords is treated as the active keyword list, not merely as an extra list.
+    The GUI can still keep JSON regex rules enabled by default so 密级格式 remains covered.
+    include_default/extra_* are accepted for backward compatibility with older calls.
+    """
+    global COMPILED_RULES
+
+    if keywords is None and extra_keywords is not None:
+        keywords = extra_keywords
+    if regexes is None and extra_regexes is not None:
+        regexes = extra_regexes
+
+    if include_default is True:
+        runtime_rules = load_rules() + build_keyword_rules(keywords) + build_regex_rules(regexes, include_default_regex=False)
+    else:
+        runtime_rules = build_keyword_rules(keywords) + build_regex_rules(regexes, include_default_regex=include_default_regex)
+
+    COMPILED_RULES = compile_rules(runtime_rules)
+    return len(COMPILED_RULES)
 
 
 def extract_secrets_from_text(text: str, line_num: str | int) -> list[dict[str, str]]:
