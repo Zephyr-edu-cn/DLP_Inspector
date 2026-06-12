@@ -13,7 +13,15 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-`requirements.txt` 默认安装通用依赖和 CPU 版 PaddlePaddle。若只检查非 OCR 模块，可先安装 `requirements-base.txt`，但完整 GUI 启动仍需要 OCR 相关依赖可导入。
+依赖分层如下：
+
+- `requirements-base.txt`：文件、数据库、Web、报告、GUI 和打包基础依赖，不包含 PaddleOCR / PaddlePaddle。
+- `requirements-ocr.txt`：CPU/GPU 共用的 PaddleOCR 前端。
+- `requirements.txt`：基础依赖 + OCR 前端 + CPU 版 PaddlePaddle。
+- `requirements-gpu.txt`：基础依赖 + OCR 前端 + GPU 版 PaddlePaddle。
+- `requirements-test.txt`：GitHub Actions 使用的轻量测试依赖，不包含 OCR、GUI、Pandas 和 Windows COM。
+
+OCR 模块采用延迟导入。只安装 `requirements-base.txt` 时，可导入并运行非 OCR 模块；实际创建 `ImageScanner` 时会明确提示安装 OCR 依赖。
 
 ## CPU / GPU 依赖选择
 
@@ -27,6 +35,13 @@ pip install -r requirements.txt
 
 ```bash
 pip install -r requirements-gpu.txt
+```
+
+已存在基础环境时，也可以单独安装 OCR 前端和匹配的运行时：
+
+```bash
+pip install -r requirements-ocr.txt
+pip install paddlepaddle==2.6.1
 ```
 
 注意：如果打包目标是普通展示或测试环境，优先使用 CPU 包，避免 GPU 运行时、驱动和动态库带来的额外不确定性。打包产物中不应混入与实际运行方式不一致的 GPU 依赖。
@@ -101,4 +116,6 @@ python scripts/smoke_scan.py
 
 该脚本默认扫描 `sample_data/files/`，并将报告输出到本地 `audit_reports/`。
 
-完整核心模块导入需要安装 `requirements.txt`。OCR 相关依赖较重，可作为独立验证项处理。
+完整 OCR 运行需要安装 `requirements.txt` 或等价的 OCR 前端与 PaddlePaddle 运行时；非 OCR 模块可只安装基础依赖。
+
+轻量自动测试与可选集成测试见 [testing.md](testing.md)。GitHub Actions 不执行 PyInstaller、OCR 模型推理、真实 MySQL 扫描或 Windows COM 测试。

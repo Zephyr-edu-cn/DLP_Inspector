@@ -96,7 +96,7 @@ class WebScanner:
             except Exception as e:
                 # 网页打不开很正常，但需要进入审计报告的 errors sheet，避免异常静默丢失
                 error_msg = f"无法访问网页: {e}"
-                print(f"⚠️ 无法访问 {current_url}: {e}")
+                print(f"[WARN] 无法访问 {current_url}: {e}")
                 results.append(ScanResult(
                     source_type="WEB",
                     source_path=current_url,

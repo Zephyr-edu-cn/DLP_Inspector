@@ -27,9 +27,6 @@ pymysql==1.1.0
 requests
 beautifulsoup4
 
-# OCR frontend
-paddleocr==2.8.1
-
 # Data processing and Excel report export
 pandas
 

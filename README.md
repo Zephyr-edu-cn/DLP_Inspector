@@ -78,6 +78,7 @@ DLP Inspector 是一个轻量级保密审计自查工具原型，用于在授权
 ```text
 DLP_Inspector/
 ├── assets/              # README 截图素材
+├── .github/workflows/   # 不安装重型 OCR 依赖的轻量 CI
 ├── config/              # 默认规则配置，例如 rules.json
 ├── core/                # 文件、数据库、Web、OCR 扫描模块
 ├── docs/                # 交付边界与打包说明
@@ -85,13 +86,16 @@ DLP_Inspector/
 ├── report/              # Excel 报告导出模块
 ├── sample_data/         # 可复现实验样例
 ├── scripts/             # 本地验证脚本
+├── tests/               # 轻量测试与可选集成测试
 ├── ui/                  # CustomTkinter GUI
 ├── utils/               # 文件类型、文档解析、正则匹配工具
 ├── main.py              # 兼容启动入口
 ├── run.py               # 推荐启动入口
 ├── requirements.txt     # 默认 CPU 运行依赖
-├── requirements-base.txt
-├── requirements-gpu.txt
+├── requirements-base.txt # 不含 PaddleOCR / PaddlePaddle
+├── requirements-ocr.txt  # CPU/GPU 共用 OCR 前端
+├── requirements-gpu.txt  # GPU OCR 运行依赖
+├── requirements-test.txt # GitHub Actions 轻量测试依赖
 └── README.md
 ```
 
@@ -108,7 +112,13 @@ pip install -r requirements.txt
 python run.py
 ```
 
-如只需要检查非 OCR 代码结构，可先安装 `requirements-base.txt`，但启动完整 GUI 时仍需要满足全部运行依赖。
+如只运行文件、数据库、Web、报告及 GUI 的非 OCR 入口，可安装：
+
+```powershell
+pip install -r requirements-base.txt
+```
+
+`requirements-base.txt` 不包含 PaddleOCR / PaddlePaddle。OCR 模块采用延迟导入，因此缺少 OCR 依赖时不影响其他核心模块导入；实际执行图片 OCR 前仍需安装 `requirements.txt`，或单独安装 `requirements-ocr.txt` 和匹配的 PaddlePaddle CPU/GPU 运行时。
 
 ## 报告输出
 
@@ -136,6 +146,18 @@ python scripts/smoke_scan.py
 ```
 
 默认扫描 `sample_data/files/` 并导出 Excel 报告到本地 `audit_reports/` 目录。
+
+## 自动化测试
+
+仓库提供轻量自动化测试与 GitHub Actions，不要求 CI 安装 PaddleOCR、PaddlePaddle、连接真实 MySQL 或准备 Windows Office COM 环境：
+
+```bash
+pip install -r requirements-test.txt
+python -B -m pytest -q
+python -B scripts/smoke_scan.py --no-report
+```
+
+测试覆盖规则加载与模糊正则、文件 smoke、Web 同域 BFS、数据库分页 mock、异常路径，以及 Excel sheet/字段结构。OCR、真实 MySQL 和 Windows COM 保留为默认跳过的可选集成测试。详细说明见 [docs/testing.md](docs/testing.md)。
 
 ## 打包说明
 

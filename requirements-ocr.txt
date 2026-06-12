@@ -1,0 +1,2 @@
+# OCR frontend shared by CPU and GPU installations
+paddleocr==2.8.1
