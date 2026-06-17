@@ -2,7 +2,7 @@
 
 > Lightweight confidentiality audit and sensitive-information inspection prototype
 
-DLP Inspector 是一个轻量级保密审计自查工具原型，用于在授权环境下对本地文件、MySQL / MariaDB 文本字段、Web 静态页面和图片 OCR 文本进行敏感信息检查，并将命中结果归档为可复核的 Excel 审计报告。
+DLP Inspector 是一个轻量级保密审计自查工具原型，用于在授权环境下对本地文件、MySQL / MariaDB 文本字段、Web 静态页面和图片 OCR 文本进行敏感信息检查，并将命中结果归档为可复核的 Excel 明细报告和 HTML 摘要报告。
 
 本项目不是企业级实时阻断 DLP 网关，不提供内核级拦截、网络流量监控、外发阻断、策略下发或终端管控能力；也不是数据库漏洞扫描器、动态 JavaScript 爬虫平台或 OCR 模型训练项目。它的目标是支持文档共享、内部检查或审计归档前的轻量级预检查，帮助用户定位“风险线索在哪里、是否形成了可复核记录”。
 
@@ -11,8 +11,8 @@ DLP Inspector 是一个轻量级保密审计自查工具原型，用于在授权
 ### 综合一键检查
 
 - 支持在 GUI 中一次配置 Web、数据库、文件和图片四类任务。
-- 支持同时提交多类检查任务，并生成一份综合审计报告。
-- 综合报告包含总体概览、全部命中明细、全部异常明细，以及各子任务 summary。
+- 支持同时提交多类检查任务，并生成一套综合审计报告。
+- 综合 Excel 报告包含总体概览、高风险摘要、全部命中明细、全部异常明细，以及各子任务 summary；HTML 报告提供离线摘要阅读视图。
 
 ### 本地文件敏感信息扫描
 
@@ -83,7 +83,7 @@ DLP_Inspector/
 ├── core/                # 文件、数据库、Web、OCR 扫描模块
 ├── docs/                # 交付边界与打包说明
 ├── models/              # ScanResult / ScanSummary 数据模型
-├── report/              # Excel 报告导出模块
+├── report/              # Excel 明细报告和 HTML 摘要报告导出模块
 ├── sample_data/         # 可复现实验样例
 ├── scripts/             # 本地验证脚本
 ├── tests/               # 轻量测试与可选集成测试
@@ -122,20 +122,24 @@ pip install -r requirements-base.txt
 
 ## 报告输出
 
-报告由 `report/report_manager.py` 生成，默认输出到本地 `audit_reports/` 目录。
+报告由 `report/report_manager.py` 生成，默认输出到本地 `audit_reports/` 目录。Excel 保留完整审计证据，HTML 提供便于快速阅读的摘要视图。
 
-单项报告包含：
+单项 Excel 报告包含：
 
 - **summary**：任务名称、扫描对象数量、命中数量、异常数量、类型分布。
+- **high_risk_findings**：critical / high、隐藏文件、后缀伪装、加密文档和解析/访问异常等高风险摘要。
 - **findings**：来源类型、路径/URL/表名、位置、规则 ID、规则名称、风险等级、命中特征、上下文证据。
 - **errors**：解析失败、权限异常、依赖缺失等需要人工复核的问题。
 
-综合报告包含：
+综合 Excel 报告包含：
 
 - **overall_summary**：综合任务数量、总扫描对象数、总命中数、总异常数。
+- **high_risk_findings**：跨任务高风险摘要，便于优先复核。
 - **all_findings**：所有子任务的命中明细。
 - **all_errors**：所有子任务的异常明细。
 - **子任务 summary**：各扫描模块的独立统计信息。
+
+HTML 摘要报告包含总览统计、分模块统计、风险等级分布、Top 规则命中、高风险明细 Top 100 和异常摘要 Top 100；完整明细仍以同目录 Excel 文件为准。
 
 ## 可复现实验
 
@@ -145,7 +149,7 @@ pip install -r requirements-base.txt
 python scripts/smoke_scan.py
 ```
 
-默认扫描 `sample_data/files/` 并导出 Excel 报告到本地 `audit_reports/` 目录。
+默认扫描 `sample_data/files/` 并导出 Excel 明细报告和 HTML 摘要报告到本地 `audit_reports/` 目录。
 
 ## 自动化测试
 
@@ -157,7 +161,7 @@ python -B -m pytest -q
 python -B scripts/smoke_scan.py --no-report
 ```
 
-测试覆盖规则加载与模糊正则、文件 smoke、Web 同域 BFS、数据库分页 mock、异常路径，以及 Excel sheet/字段结构。OCR、真实 MySQL 和 Windows COM 保留为默认跳过的可选集成测试。详细说明见 [docs/testing.md](docs/testing.md)。
+测试覆盖规则加载与模糊正则、文件 smoke、Web 同域 BFS、数据库分页 mock、异常路径、Excel sheet/字段结构，以及 HTML 摘要报告关键区块。OCR、真实 MySQL 和 Windows COM 保留为默认跳过的可选集成测试。详细说明见 [docs/testing.md](docs/testing.md)。
 
 ## 打包说明
 

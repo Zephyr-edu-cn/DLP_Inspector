@@ -308,8 +308,26 @@ class ReportStructureTests(unittest.TestCase):
             manager = ReportManager(temp_dir)
             sheets = manager._build_report_sheets(summary)
 
-            self.assertEqual(list(sheets), ["summary", "findings", "errors"])
+            self.assertEqual(list(sheets), [
+                "summary",
+                "high_risk_findings",
+                "findings",
+                "errors",
+            ])
             self.assertEqual(sheets["summary"][0], ["metric", "value"])
+            self.assertEqual(sheets["high_risk_findings"][0], [
+                "task_name",
+                "source_type",
+                "source_path",
+                "location",
+                "risk_level",
+                "rule_id",
+                "rule_name",
+                "keyword",
+                "context",
+                "error_msg",
+                "rule_description",
+            ])
             self.assertEqual(sheets["findings"][0], [
                 "source_type",
                 "source_path",
@@ -339,13 +357,107 @@ class ReportStructureTests(unittest.TestCase):
             with zipfile.ZipFile(report_path) as archive:
                 workbook = archive.read("xl/workbook.xml").decode("utf-8")
                 findings_xml = archive.read(
-                    "xl/worksheets/sheet2.xml"
+                    "xl/worksheets/sheet3.xml"
                 ).decode("utf-8")
 
-        for sheet_name in ("summary", "findings", "errors"):
+        for sheet_name in (
+            "summary",
+            "high_risk_findings",
+            "findings",
+            "errors",
+        ):
             self.assertIn(f'name="{sheet_name}"', workbook)
         for field in sheets["findings"][0]:
             self.assertIn(field, findings_xml)
+
+    def test_html_summary_contains_key_sections(self):
+        summary = ScanSummary(
+            task_name="HTML结构测试",
+            total_scanned=3,
+            total_secrets=2,
+            scanned_details={".txt": 3},
+            results=[
+                ScanResult(
+                    source_type="FILE",
+                    source_path="critical.txt",
+                    keyword="绝密",
+                    line_number="1",
+                    context="包含绝密内容",
+                    rule_id="CONF_KEYWORD_TOP_SECRET",
+                    rule_name="绝密关键词",
+                    risk_level="critical",
+                    rule_description="synthetic",
+                ),
+                ScanResult(
+                    source_type="FILE",
+                    source_path="hidden.txt",
+                    keyword="[隐藏文件]",
+                    line_number="文件属性",
+                    context="hidden synthetic",
+                    rule_id="SYSTEM_HIDDEN_FILE",
+                    rule_name="隐藏文件提示",
+                    risk_level="medium",
+                    rule_description="synthetic",
+                ),
+                ScanResult(
+                    source_type="WEB",
+                    source_path="https://audit.example/missing",
+                    keyword="[无法访问]",
+                    line_number="-",
+                    context="-",
+                    error_msg="synthetic network error",
+                ),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = ReportManager(temp_dir)
+            excel_path = str(Path(temp_dir) / "synthetic.xlsx")
+            html_path = manager.generate_html_report(summary, excel_path)
+            html = Path(html_path).read_text(encoding="utf-8")
+
+        for text in [
+            "HTML结构测试摘要报告",
+            "分模块统计",
+            "风险等级分布",
+            "规则命中 Top 20",
+            "高风险明细（前 100 条）",
+            "异常摘要（前 100 条）",
+            "完整明细见同目录 Excel 文件",
+            "SYSTEM_HIDDEN_FILE",
+            "synthetic network error",
+        ]:
+            self.assertIn(text, html)
+
+    def test_combined_report_has_high_risk_sheet(self):
+        summaries = [
+            ScanSummary(
+                task_name="本地文件深度检查",
+                total_scanned=1,
+                total_secrets=1,
+                results=[
+                    ScanResult(
+                        source_type="FILE",
+                        source_path="secret.txt",
+                        keyword="绝密",
+                        line_number="1",
+                        context="绝密内容",
+                        rule_id="CONF_KEYWORD_TOP_SECRET",
+                        rule_name="绝密关键词",
+                        risk_level="critical",
+                        rule_description="synthetic",
+                    )
+                ],
+            )
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sheets = ReportManager(temp_dir)._build_combined_report_sheets(summaries)
+        self.assertEqual(list(sheets)[:4], [
+            "overall_summary",
+            "high_risk_findings",
+            "all_findings",
+            "all_errors",
+        ])
+        self.assertEqual(sheets["high_risk_findings"][1][0], "本地文件深度检查")
 
 
 class OptionalDependencyBoundaryTests(unittest.TestCase):

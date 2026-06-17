@@ -495,29 +495,52 @@ class DLPScannerApp(ctk.CTk):
     def export_report(self):
         if not self.current_summary and not self.current_summaries:
             return
-        self.log_to_terminal("\n正在启动 ReportManager 编制结构化审计报告...", is_warning=True)
+        self.export_btn.configure(state="disabled", text="报告导出中...")
         illegal_characters_re = re.compile(r'[\000-\010]|[\013-\014]|[\016-\037]')
         summaries = self.current_summaries or [self.current_summary]
-        for summary in summaries:
-            for res in summary.results:
-                for field in ("context", "keyword", "source_path", "line_number", "error_msg"):
-                    value = getattr(res, field, None)
-                    if isinstance(value, str):
-                        setattr(res, field, illegal_characters_re.sub('', value))
+        is_combined = bool(self.current_summaries)
+        self.log_to_terminal("\n正在后台生成 Excel 明细报告和 HTML 摘要报告...", is_warning=True)
 
-        reporter = ReportManager()
-        try:
-            if self.current_summaries:
-                report_path = reporter.generate_combined_excel_report(self.current_summaries)
-            else:
-                report_path = reporter.generate_excel_report(self.current_summary)
-            if report_path:
-                self.log_to_terminal("审计报告已成功封存入库！")
-                self.log_to_terminal(f"物理地址: {report_path}")
-                self.export_btn.configure(text="报告已导出", state="disabled")
-                self.after(2000, lambda: self.export_btn.configure(text="导出审计报告", state="normal"))
-        except Exception as e:
-            self.log_to_terminal(f"导出失败: {e}", is_danger=True)
+        def worker():
+            try:
+                for summary in summaries:
+                    for res in summary.results:
+                        for field in ("context", "keyword", "source_path", "line_number", "error_msg"):
+                            value = getattr(res, field, None)
+                            if isinstance(value, str):
+                                setattr(res, field, illegal_characters_re.sub('', value))
+
+                reporter = ReportManager()
+                if is_combined:
+                    report_path = reporter.generate_combined_excel_report(summaries)
+                    html_path = reporter.generate_combined_html_report(summaries, report_path) if report_path else ""
+                else:
+                    report_path = reporter.generate_excel_report(summaries[0])
+                    html_path = reporter.generate_html_report(summaries[0], report_path) if report_path else ""
+
+                def finish_success():
+                    if report_path:
+                        self.log_to_terminal("审计报告已成功封存入库！")
+                        self.log_to_terminal(f"Excel 明细报告: {report_path}")
+                        if html_path:
+                            self.log_to_terminal(f"HTML 摘要报告: {html_path}")
+                        self.export_btn.configure(text="报告已导出", state="disabled")
+                        self.after(2000, lambda: self.export_btn.configure(text="导出审计报告", state="normal"))
+                    else:
+                        self.log_to_terminal("导出失败：ReportManager 未返回有效报告路径。", is_danger=True)
+                        self.export_btn.configure(text="导出审计报告", state="normal")
+
+                self.after(0, finish_success)
+            except Exception as e:
+                error_message = str(e)
+
+                def finish_error():
+                    self.log_to_terminal(f"导出失败: {error_message}", is_danger=True)
+                    self.export_btn.configure(text="导出审计报告", state="normal")
+
+                self.after(0, finish_error)
+
+        threading.Thread(target=worker, daemon=True).start()
 
 
 if __name__ == "__main__":

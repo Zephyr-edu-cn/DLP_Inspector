@@ -24,7 +24,8 @@ python -B scripts/smoke_scan.py --no-report
 - 文件不存在、解析器异常及异常来源路径留痕。
 - Web 静态页面的同域 BFS、深度限制和请求异常留痕。
 - MySQL 文本字段扫描的 `LIMIT / OFFSET` 分页调用与跨页行号。
-- `summary`、`findings`、`errors` 三个 sheet 及字段结构。
+- `summary`、`high_risk_findings`、`findings`、`errors` 等 Excel sheet 及字段结构。
+- HTML 摘要报告的总览、风险分布、高风险明细和异常摘要等关键区块。
 - 不安装 PaddleOCR 时，`core.image_scanner` 模块仍可导入。
 
 轻量测试验证的是确定性流程和数据结构，不代表真实数据上的 precision、recall、F1，也不验证 PaddleOCR 模型精度、真实 MySQL 性能或 Windows Office 自动化兼容性。

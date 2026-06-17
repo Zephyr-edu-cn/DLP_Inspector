@@ -31,11 +31,15 @@ def run_file_smoke(target: Path, output_dir: Path, export_report: bool) -> int:
     if export_report:
         from report.report_manager import ReportManager
 
-        report_path = ReportManager(output_dir=str(output_dir)).generate_excel_report(summary)
+        manager = ReportManager(output_dir=str(output_dir))
+        report_path = manager.generate_excel_report(summary)
         if not report_path:
-            print("report_export=failed")
+            print("excel_report=failed")
             return 2
-        print(f"report_export={report_path}")
+        html_path = manager.generate_html_report(summary, report_path)
+        print(f"excel_report={report_path}")
+        if html_path:
+            print(f"html_report={html_path}")
 
     return 0
 
