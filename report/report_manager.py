@@ -173,6 +173,7 @@ class ReportManager:
             "all_findings": finding_rows,
             "all_errors": error_rows,
         }
+        sheets.update(self._build_metadata_sheets(summaries))
 
         # 保留每个子任务的 summary，便于老师快速核对每个任务的扫描数量
         for index, summary in enumerate(summaries, start=1):
@@ -239,12 +240,78 @@ class ReportManager:
                 res.context,
             ])
 
-        return {
+        sheets = {
             "summary": summary_rows,
             "high_risk_findings": self._build_high_risk_rows([summary]),
             "findings": finding_rows,
             "errors": error_rows,
         }
+        sheets.update(self._build_metadata_sheets([summary]))
+        return sheets
+
+    def _build_metadata_sheets(self, summaries: list[ScanSummary]) -> dict[str, list[list[object]]]:
+        sheets: dict[str, list[list[object]]] = {}
+
+        web_rows = [[
+            "task_name",
+            "url",
+            "depth",
+            "status_code",
+            "content_type",
+            "title",
+            "text_sha256",
+            "text_chars",
+            "fetched_at",
+            "error_msg",
+        ]]
+        db_rows = [[
+            "task_name",
+            "label",
+            "host",
+            "port",
+            "database",
+            "user",
+            "status",
+            "total_scanned",
+            "total_findings",
+            "total_errors",
+            "error_msg",
+        ]]
+
+        for summary in summaries:
+            for snapshot in summary.metadata.get("web_snapshots", []):
+                web_rows.append([
+                    summary.task_name,
+                    snapshot.get("url", ""),
+                    snapshot.get("depth", ""),
+                    snapshot.get("status_code", ""),
+                    snapshot.get("content_type", ""),
+                    snapshot.get("title", ""),
+                    snapshot.get("text_sha256", ""),
+                    snapshot.get("text_chars", ""),
+                    snapshot.get("fetched_at", ""),
+                    snapshot.get("error_msg", ""),
+                ])
+            for target in summary.metadata.get("db_targets", []):
+                db_rows.append([
+                    summary.task_name,
+                    target.get("label", ""),
+                    target.get("host", ""),
+                    target.get("port", ""),
+                    target.get("database", ""),
+                    target.get("user", ""),
+                    target.get("status", ""),
+                    target.get("total_scanned", ""),
+                    target.get("total_findings", ""),
+                    target.get("total_errors", ""),
+                    target.get("error_msg", ""),
+                ])
+
+        if len(web_rows) > 1:
+            sheets["web_snapshots"] = web_rows
+        if len(db_rows) > 1:
+            sheets["db_targets"] = db_rows
+        return sheets
 
     def _write_with_pandas(self, file_path: str, sheets: dict[str, list[list[object]]]) -> None:
         import pandas as pd
@@ -506,6 +573,8 @@ class ReportManager:
             for risk in ["critical", "high", "medium", "low", "unknown"]
             if risk_counts.get(risk, 0)
         ]
+        web_snapshot_rows = self._web_snapshot_rows_for_html(summaries)
+        db_target_rows = self._db_target_rows_for_html(summaries)
 
         excel_note = (
             f"完整明细见同目录 Excel 文件：{html_escape(os.path.basename(excel_path))}"
@@ -528,11 +597,18 @@ class ReportManager:
     .hero h1 {{ margin: 0 0 8px; font-size: 26px; }}
     .hero p {{ margin: 4px 0; color: #dbeafe; }}
     .cards {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }}
+    .toolbar {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin: 16px 0; position: sticky; top: 0; z-index: 5; }}
+    .toolbar input, .toolbar select {{ border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 10px; font-size: 14px; }}
+    .toolbar input {{ min-width: 260px; flex: 1; }}
+    .toolbar a {{ color: #2563eb; text-decoration: none; font-size: 13px; }}
+    .quick-nav {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+    .quick-nav a {{ background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 6px 8px; }}
     .card {{ background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; }}
     .card .label {{ color: #64748b; font-size: 13px; }}
     .card .value {{ font-size: 26px; font-weight: 700; margin-top: 6px; }}
     section {{ background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 18px; margin: 16px 0; }}
     h2 {{ font-size: 18px; margin: 0 0 12px; }}
+    .table-wrap {{ overflow-x: auto; }}
     table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
     th, td {{ border-bottom: 1px solid #e5e7eb; padding: 8px 10px; text-align: left; vertical-align: top; word-break: break-word; }}
     th {{ background: #f1f5f9; color: #334155; font-weight: 700; }}
@@ -541,6 +617,8 @@ class ReportManager:
     tr.medium td {{ background: #fefce8; }}
     .muted {{ color: #64748b; }}
     .note {{ font-size: 13px; color: #475569; line-height: 1.7; }}
+    .hidden-row {{ display: none; }}
+    @media (max-width: 820px) {{ .cards {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} .page {{ padding: 16px; }} }}
   </style>
 </head>
 <body>
@@ -555,25 +633,51 @@ class ReportManager:
       {self._html_card("命中总数", len(findings))}
       {self._html_card("异常总数", len(errors))}
     </div>
-    <section>
+    <div class="toolbar">
+      <input id="reportSearch" type="search" placeholder="搜索路径、规则、上下文或异常信息">
+      <select id="riskFilter" aria-label="风险等级筛选">
+        <option value="">全部风险</option>
+        <option value="critical">critical</option>
+        <option value="high">high</option>
+        <option value="medium">medium</option>
+        <option value="low">low</option>
+        <option value="error">error</option>
+      </select>
+      <div class="quick-nav">
+        <a href="#module-stats">分模块</a>
+        <a href="#risk-dist">风险分布</a>
+        <a href="#rule-top">规则 Top</a>
+        <a href="#high-risk">高风险</a>
+        <a href="#errors">异常</a>
+        <a href="#snapshots">快照/DB</a>
+      </div>
+    </div>
+    <section id="module-stats">
       <h2>分模块统计</h2>
       {self._html_table(["任务", "扫描对象", "命中", "异常", "细分统计"], task_rows)}
     </section>
-    <section>
+    <section id="risk-dist">
       <h2>风险等级分布</h2>
       {self._html_table(["风险等级", "命中数"], risk_rows)}
     </section>
-    <section>
+    <section id="rule-top">
       <h2>规则命中 Top 20</h2>
       {self._html_table(["规则 ID", "规则名称", "命中数"], top_rule_rows)}
     </section>
-    <section>
+    <section id="high-risk">
       <h2>高风险明细（前 100 条）</h2>
       {self._html_result_table(high_risk_rows)}
     </section>
-    <section>
+    <section id="errors">
       <h2>异常摘要（前 100 条）</h2>
-      {self._html_table(["任务", "来源类型", "路径/URL/对象", "位置", "特征", "异常信息"], error_rows)}
+      {self._html_table(["任务", "来源类型", "路径/URL/对象", "位置", "特征", "异常信息"], error_rows, risk_col=6)}
+    </section>
+    <section id="snapshots">
+      <h2>页面快照与数据库目标</h2>
+      <h3>Web 页面快照</h3>
+      {self._html_table(["任务", "URL", "深度", "状态码", "标题", "文本 SHA-256", "文本长度", "抓取时间", "异常"], web_snapshot_rows, risk_col=8)}
+      <h3>数据库目标</h3>
+      {self._html_table(["任务", "标签", "Host", "Port", "Database", "User", "状态", "扫描表数", "命中数", "异常数", "异常信息"], db_target_rows, risk_col=6)}
     </section>
     <section>
       <h2>报告说明</h2>
@@ -581,9 +685,64 @@ class ReportManager:
       <p class="note">本页面仅展示主要统计、规则分布和前 100 条重点记录，便于快速阅读；全部记录和完整字段以 Excel 明细报告为准。</p>
     </section>
   </div>
+  <script>
+    (function() {{
+      const searchInput = document.getElementById('reportSearch');
+      const riskFilter = document.getElementById('riskFilter');
+      function applyFilters() {{
+        const query = (searchInput.value || '').toLowerCase().trim();
+        const risk = (riskFilter.value || '').toLowerCase();
+        document.querySelectorAll('tbody tr').forEach(function(row) {{
+          const haystack = (row.dataset.search || row.innerText || '').toLowerCase();
+          const rowRisk = (row.dataset.risk || '').toLowerCase();
+          const matchesText = !query || haystack.indexOf(query) !== -1;
+          const matchesRisk = !risk || rowRisk === risk;
+          row.classList.toggle('hidden-row', !(matchesText && matchesRisk));
+        }});
+      }}
+      searchInput.addEventListener('input', applyFilters);
+      riskFilter.addEventListener('change', applyFilters);
+    }})();
+  </script>
 </body>
 </html>
 """
+
+    def _web_snapshot_rows_for_html(self, summaries: list[ScanSummary]) -> list[list[object]]:
+        rows: list[list[object]] = []
+        for summary in summaries:
+            for snapshot in summary.metadata.get("web_snapshots", []):
+                rows.append([
+                    summary.task_name,
+                    snapshot.get("url", ""),
+                    snapshot.get("depth", ""),
+                    snapshot.get("status_code", ""),
+                    snapshot.get("title", ""),
+                    snapshot.get("text_sha256", ""),
+                    snapshot.get("text_chars", ""),
+                    snapshot.get("fetched_at", ""),
+                    "error" if snapshot.get("error_msg") else "",
+                ])
+        return rows[:100]
+
+    def _db_target_rows_for_html(self, summaries: list[ScanSummary]) -> list[list[object]]:
+        rows: list[list[object]] = []
+        for summary in summaries:
+            for target in summary.metadata.get("db_targets", []):
+                rows.append([
+                    summary.task_name,
+                    target.get("label", ""),
+                    target.get("host", ""),
+                    target.get("port", ""),
+                    target.get("database", ""),
+                    target.get("user", ""),
+                    target.get("status", ""),
+                    target.get("total_scanned", ""),
+                    target.get("total_findings", ""),
+                    target.get("total_errors", ""),
+                    target.get("error_msg", ""),
+                ])
+        return rows[:100]
 
     def _html_card(self, label: str, value: object) -> str:
         return (
@@ -626,14 +785,27 @@ class ReportManager:
         header_html = "".join(f"<th>{html_escape(str(header))}</th>" for header in headers)
         body_html = []
         for row in rows:
-            risk_class = ""
+            risk_value = ""
+            row_class = ""
             if risk_col is not None and len(row) > risk_col:
                 risk_value = str(row[risk_col]).lower()
                 if risk_value in {"critical", "high", "medium"}:
-                    risk_class = f' class="{risk_value}"'
+                    row_class = f' class="{risk_value}"'
+                elif risk_value in {"error", "异常", "failed"}:
+                    risk_value = "error"
+            elif risk_col is not None and risk_col >= len(row):
+                risk_value = "error"
+            row_text = " ".join(str(cell) for cell in row)
             cells = "".join(f"<td>{html_escape(str(cell))}</td>" for cell in row)
-            body_html.append(f"<tr{risk_class}>{cells}</tr>")
-        return f"<table><thead><tr>{header_html}</tr></thead><tbody>{''.join(body_html)}</tbody></table>"
+            body_html.append(
+                f'<tr{row_class} data-risk="{html_escape(risk_value)}" '
+                f'data-search="{html_escape(row_text)}">{cells}</tr>'
+            )
+        return (
+            f'<div class="table-wrap"><table class="data-table">'
+            f'<thead><tr>{header_html}</tr></thead><tbody>{"".join(body_html)}</tbody>'
+            f'</table></div>'
+        )
 
     def _format_openpyxl_sheet(self, worksheet, rows, header, Font, PatternFill, Alignment, FormulaRule) -> None:
         worksheet.freeze_panes = "A2"

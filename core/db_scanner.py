@@ -1,32 +1,87 @@
 # core/db_scanner.py
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from typing import Any
+
 import pymysql
+
 from models.data_models import ScanResult, ScanSummary
 from utils.regex_utils import extract_secrets_from_text
 
 
 SYSTEM_DATABASES = {'information_schema', 'mysql', 'performance_schema', 'sys'}
+TEXT_COLUMN_TYPES = ('varchar', 'text', 'char', 'longtext', 'mediumtext', 'tinytext')
+
+
+@dataclass(frozen=True)
+class DBScanTarget:
+    """A single authorized MySQL/MariaDB audit target."""
+    host: str
+    port: int
+    user: str
+    password: str
+    database: str = ""
+    label: str = ""
+
+    @property
+    def display_name(self) -> str:
+        base = self.label.strip() if self.label else f"{self.host}:{int(self.port)}"
+        db = self.database.strip() or "*"
+        return f"{base}/{db}"
+
+    def to_safe_dict(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "host": self.host,
+            "port": int(self.port),
+            "database": self.database or "*",
+            "user": self.user,
+        }
 
 
 class DBScanner:
-    def __init__(self, host, port, user, password, database: str | None = None, batch_size: int = 500):
-        """初始化数据库连接配置。database 可为空；为空时自动扫描所有非系统库。"""
-        self.host = host
+    def __init__(
+        self,
+        host,
+        port,
+        user,
+        password,
+        database: str | None = None,
+        batch_size: int = 500,
+        include_target_in_path: bool = False,
+        target_label: str = "",
+        connect_timeout: int = 5,
+        read_timeout: int = 30,
+        write_timeout: int = 30,
+    ):
+        """Initialize one authorized MySQL/MariaDB text-field audit target."""
+        self.host = str(host).strip() or "localhost"
         self.port = int(port)
         self.user = user
         self.password = password
         self.database = (database or '').strip()
         self.batch_size = max(1, int(batch_size or 500))
+        self.include_target_in_path = include_target_in_path
+        self.target_label = target_label.strip()
+        self.connect_timeout = max(1, int(connect_timeout or 5))
+        self.read_timeout = max(1, int(read_timeout or 30))
+        self.write_timeout = max(1, int(write_timeout or 30))
 
     @staticmethod
     def list_databases(host, port, user, password) -> list[str]:
-        """自动获取当前账号可访问的非系统数据库名。"""
+        """List non-system databases visible to the provided account."""
         connection = pymysql.connect(
             host=host,
             port=int(port),
             user=user,
             password=password,
             charset='utf8mb4',
-            cursorclass=pymysql.cursors.DictCursor
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=5,
+            read_timeout=30,
+            write_timeout=30,
         )
         try:
             with connection.cursor() as cursor:
@@ -37,6 +92,99 @@ class DBScanner:
             if connection.open:
                 connection.close()
 
+    @classmethod
+    def scan_targets(
+        cls,
+        targets: list[DBScanTarget | dict[str, Any]],
+        batch_size: int = 500,
+        max_workers: int = 4,
+    ) -> ScanSummary:
+        """Scan multiple authorized DB targets concurrently and merge their audit results."""
+        normalized_targets = [cls._normalize_target(target) for target in targets]
+        normalized_targets = [target for target in normalized_targets if target.host and target.user]
+        if not normalized_targets:
+            raise ValueError("未提供可扫描的数据库目标。")
+
+        all_results: list[ScanResult] = []
+        scanned_details: dict[str, int] = {}
+        target_metadata: list[dict[str, Any]] = []
+        workers = max(1, min(int(max_workers or 1), len(normalized_targets)))
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_map = {}
+            for target in normalized_targets:
+                scanner = cls(
+                    target.host,
+                    target.port,
+                    target.user,
+                    target.password,
+                    database=target.database,
+                    batch_size=batch_size,
+                    include_target_in_path=True,
+                    target_label=target.label or f"{target.host}:{target.port}",
+                )
+                future_map[executor.submit(scanner.scan)] = target
+
+            for future in as_completed(future_map):
+                target = future_map[future]
+                safe_target = target.to_safe_dict()
+                try:
+                    summary = future.result()
+                    all_results.extend(summary.results)
+                    scanned_details.update(summary.scanned_details)
+                    target_metadata.append({
+                        **safe_target,
+                        "status": "ok",
+                        "total_scanned": summary.total_scanned,
+                        "total_findings": len([r for r in summary.results if not r.error_msg]),
+                        "total_errors": len([r for r in summary.results if r.error_msg]),
+                    })
+                except Exception as exc:
+                    message = f"数据库目标扫描失败: {exc}"
+                    all_results.append(ScanResult(
+                        source_type="DB",
+                        source_path=target.display_name,
+                        keyword="[数据库目标异常]",
+                        line_number="-",
+                        context="-",
+                        error_msg=message,
+                    ))
+                    target_metadata.append({
+                        **safe_target,
+                        "status": "error",
+                        "total_scanned": 0,
+                        "total_findings": 0,
+                        "total_errors": 1,
+                        "error_msg": str(exc),
+                    })
+
+        findings = [result for result in all_results if not result.error_msg]
+        return ScanSummary(
+            task_name="数据库文本字段并发审计",
+            total_scanned=sum(item.get("total_scanned", 0) for item in target_metadata),
+            total_secrets=len(findings),
+            scanned_details=scanned_details,
+            results=all_results,
+            metadata={
+                "db_targets": target_metadata,
+                "db_parallel_workers": workers,
+                "db_batch_size": int(batch_size or 500),
+            },
+        )
+
+    @staticmethod
+    def _normalize_target(target: DBScanTarget | dict[str, Any]) -> DBScanTarget:
+        if isinstance(target, DBScanTarget):
+            return target
+        return DBScanTarget(
+            host=str(target.get("host", "localhost") or "localhost"),
+            port=int(target.get("port", 3306) or 3306),
+            user=str(target.get("user", "")),
+            password=str(target.get("password", target.get("pwd", ""))),
+            database=str(target.get("database", target.get("db", "")) or ""),
+            label=str(target.get("label", "") or ""),
+        )
+
     def _connect(self, database: str | None = None):
         config = {
             'host': self.host,
@@ -45,6 +193,9 @@ class DBScanner:
             'password': self.password,
             'charset': 'utf8mb4',
             'cursorclass': pymysql.cursors.DictCursor,
+            'connect_timeout': self.connect_timeout,
+            'read_timeout': self.read_timeout,
+            'write_timeout': self.write_timeout,
         }
         if database:
             config['database'] = database
@@ -55,7 +206,7 @@ class DBScanner:
         return "`" + value.replace("`", "``") + "`"
 
     def scan(self) -> ScanSummary:
-        """执行数据库扫描；若未指定 database，则扫描所有非系统库。"""
+        """Scan one target; if database is empty, scan all non-system databases."""
         databases = [self.database] if self.database else self.list_databases(self.host, self.port, self.user, self.password)
         if not databases:
             raise ValueError("未发现可扫描的用户数据库。")
@@ -78,7 +229,21 @@ class DBScanner:
             total_scanned=total_table_count,
             total_secrets=len(all_results),
             scanned_details=table_details,
-            results=all_results
+            results=all_results,
+            metadata={
+                "db_targets": [{
+                    "label": self.target_label,
+                    "host": self.host,
+                    "port": self.port,
+                    "database": self.database or "*",
+                    "user": self.user,
+                    "status": "ok",
+                    "total_scanned": total_table_count,
+                    "total_findings": len([r for r in all_results if not r.error_msg]),
+                    "total_errors": len([r for r in all_results if r.error_msg]),
+                }],
+                "db_batch_size": self.batch_size,
+            },
         )
 
     def _scan_database(self, db_name: str) -> tuple[list[ScanResult], dict[str, int]]:
@@ -91,7 +256,7 @@ class DBScanner:
                 tables = [list(row.values())[0] for row in cursor.fetchall()]
 
                 for table in tables:
-                    table_key = f"{db_name}.{table}"
+                    table_key = self._table_key(db_name, table)
                     text_columns = self._get_text_columns(cursor, db_name, table)
 
                     cursor.execute(f"SELECT COUNT(*) AS count FROM {self._quote_identifier(table)}")
@@ -139,8 +304,15 @@ class DBScanner:
 
         return results, table_details
 
+    def _table_key(self, db_name: str, table_name: str) -> str:
+        table_key = f"{db_name}.{table_name}"
+        if not self.include_target_in_path:
+            return table_key
+        target = self.target_label or f"{self.host}:{self.port}"
+        return f"{target}/{table_key}"
+
     def _get_text_columns(self, cursor, db_name, table_name) -> list[str]:
-        """查字典表，仅提取可能包含涉密文字的文本类字段。"""
+        """Read metadata and return text-like columns only."""
         query = """
             SELECT COLUMN_NAME
             FROM information_schema.COLUMNS

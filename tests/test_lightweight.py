@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.db_scanner import DBScanner
+from core.db_scanner import DBScanTarget, DBScanner
 from core.file_scanner import FileScanner
 from core.web_scanner import WebScanner
 from models.data_models import ScanResult, ScanSummary
@@ -128,6 +128,7 @@ class FileSmokeTests(unittest.TestCase):
 class _FakeResponse:
     def __init__(self, html):
         self.text = html
+        self.status_code = 200
         self.headers = {"Content-Type": "text/html; charset=utf-8"}
         self.encoding = "utf-8"
         self.apparent_encoding = "utf-8"
@@ -169,11 +170,39 @@ class WebScannerTests(unittest.TestCase):
             "https://audit.example/level1",
         ])
         self.assertEqual(summary.total_scanned, 2)
+        self.assertEqual(len(summary.metadata["web_snapshots"]), 2)
+        self.assertTrue(all(
+            snapshot["text_sha256"] for snapshot in summary.metadata["web_snapshots"]
+        ))
         self.assertTrue(any(
             result.rule_id == "CONF_KEYWORD_SENSITIVE"
             and result.source_path.endswith("/level1")
             for result in summary.results
         ))
+
+    def test_snapshot_verification_detects_changed_static_html(self):
+        pages = iter([
+            "<html><head><title>demo</title></head><body>公开首页</body></html>",
+            "<html><head><title>demo</title></head><body>公开首页 已更新</body></html>",
+        ])
+
+        def fake_get(_url, headers=None, timeout=None):
+            return _FakeResponse(next(pages))
+
+        with patch("core.web_scanner.requests.get", side_effect=fake_get):
+            first_summary = WebScanner(
+                "https://audit.example/", max_depth=0
+            ).scan()
+            verify_summary = WebScanner(
+                "https://audit.example/", max_depth=0
+            ).verify_snapshots(first_summary.metadata["web_snapshots"])
+
+        self.assertEqual(verify_summary.total_scanned, 1)
+        self.assertEqual(verify_summary.total_secrets, 1)
+        self.assertEqual(
+            verify_summary.results[0].rule_id,
+            "SYSTEM_WEB_CONTENT_CHANGED",
+        )
 
     def test_request_failure_is_recorded(self):
         with patch(
@@ -243,6 +272,43 @@ class _PagingConnection:
 
 
 class DatabasePaginationTests(unittest.TestCase):
+    def test_multiple_targets_are_merged_with_metadata(self):
+        def fake_scan(scanner):
+            return ScanSummary(
+                task_name="数据库文本字段审计",
+                total_scanned=1,
+                total_secrets=1,
+                scanned_details={f"{scanner.target_label}/demo.documents": 1},
+                results=[
+                    ScanResult(
+                        source_type="DB",
+                        source_path=f"{scanner.target_label}/demo.documents",
+                        keyword="涉密",
+                        line_number="第1行 - 字段[content]",
+                        context="包含涉密内容",
+                        rule_id="CONF_KEYWORD_SENSITIVE",
+                        rule_name="涉密关键词",
+                        risk_level="high",
+                    )
+                ],
+            )
+
+        targets = [
+            DBScanTarget("db-a.example", 3306, "audit", "pwd", "demo", "target-a"),
+            DBScanTarget("db-b.example", 3307, "audit", "pwd", "demo", "target-b"),
+        ]
+        with patch.object(DBScanner, "scan", fake_scan):
+            summary = DBScanner.scan_targets(targets, max_workers=2)
+
+        self.assertEqual(summary.task_name, "数据库文本字段并发审计")
+        self.assertEqual(summary.total_scanned, 2)
+        self.assertEqual(summary.total_secrets, 2)
+        self.assertEqual(summary.metadata["db_parallel_workers"], 2)
+        self.assertEqual(
+            {target["host"] for target in summary.metadata["db_targets"]},
+            {"db-a.example", "db-b.example"},
+        )
+
     def test_text_fields_are_read_in_pages(self):
         connection = _PagingConnection()
         scanner = DBScanner(
@@ -348,6 +414,38 @@ class ReportStructureTests(unittest.TestCase):
                 "context",
             ])
 
+            metadata_summary = ScanSummary(
+                task_name="Web元数据测试",
+                total_scanned=1,
+                metadata={
+                    "web_snapshots": [{
+                        "url": "https://audit.example/",
+                        "depth": 0,
+                        "status_code": 200,
+                        "content_type": "text/html",
+                        "title": "demo",
+                        "text_sha256": "abc",
+                        "text_chars": 4,
+                        "fetched_at": "2026-06-23T12:00:00",
+                        "error_msg": "",
+                    }],
+                    "db_targets": [{
+                        "label": "target-a",
+                        "host": "db-a.example",
+                        "port": 3306,
+                        "database": "demo",
+                        "user": "audit",
+                        "status": "ok",
+                        "total_scanned": 1,
+                        "total_findings": 0,
+                        "total_errors": 0,
+                    }],
+                },
+            )
+            metadata_sheets = manager._build_report_sheets(metadata_summary)
+            self.assertIn("web_snapshots", metadata_sheets)
+            self.assertIn("db_targets", metadata_sheets)
+
             with patch.object(
                 manager,
                 "_write_with_pandas",
@@ -422,6 +520,10 @@ class ReportStructureTests(unittest.TestCase):
             "规则命中 Top 20",
             "高风险明细（前 100 条）",
             "异常摘要（前 100 条）",
+            "页面快照与数据库目标",
+            "reportSearch",
+            "riskFilter",
+            'data-risk="error"',
             "完整明细见同目录 Excel 文件",
             "SYSTEM_HIDDEN_FILE",
             "synthetic network error",

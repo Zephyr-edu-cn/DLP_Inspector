@@ -15,7 +15,7 @@ if root_dir not in sys.path:
     sys.path.append(root_dir)
 
 from core.file_scanner import FileScanner
-from core.db_scanner import DBScanner
+from core.db_scanner import DBScanTarget, DBScanner
 from core.web_scanner import WebScanner
 from core.image_scanner import ImageScanner
 from models.data_models import ScanResult, ScanSummary
@@ -227,6 +227,48 @@ class DLPScannerApp(ctk.CTk):
             db = self._db_selection_to_database(self.db_name.get())
         return {"host": host, "port": port, "user": user, "pwd": pwd, "db": db}
 
+    def _build_db_targets(self, payload: dict) -> list[DBScanTarget]:
+        host_items = [part.strip() for part in re.split(r"[,;\n]+", payload.get("host", "")) if part.strip()]
+        if not host_items:
+            host_items = ["localhost"]
+
+        targets: list[DBScanTarget] = []
+        for index, host_item in enumerate(host_items, start=1):
+            host_part, _, db_override = host_item.partition("/")
+            host_name, port = self._split_host_port(host_part, payload.get("port", "3306"))
+            targets.append(DBScanTarget(
+                host=host_name or "localhost",
+                port=int(port or 3306),
+                user=payload.get("user", ""),
+                password=payload.get("pwd", ""),
+                database=(db_override or payload.get("db", "")).strip(),
+                label=f"DB{index}:{host_name or 'localhost'}:{int(port or 3306)}",
+            ))
+        return targets
+
+    def _split_host_port(self, host_text: str, default_port: str) -> tuple[str, int]:
+        value = host_text.strip()
+        if ":" in value and value.count(":") == 1:
+            host, port = value.rsplit(":", 1)
+            if port.strip().isdigit():
+                return host.strip(), int(port.strip())
+        return value, int(default_port or 3306)
+
+    def _scan_db_payload(self, payload: dict) -> ScanSummary:
+        targets = self._build_db_targets(payload)
+        if len(targets) == 1:
+            target = targets[0]
+            return DBScanner(
+                target.host,
+                target.port,
+                target.user,
+                target.password,
+                target.database,
+                target_label=target.label,
+            ).scan()
+        self.log_to_terminal(f"DB batch audit targets: {len(targets)}; submitting text-field scans concurrently.")
+        return DBScanner.scan_targets(targets, max_workers=min(4, len(targets)))
+
     def fetch_databases(self):
         payload = self._get_db_payload("single")
         self._fetch_databases_to_widget(payload, self.db_name)
@@ -242,7 +284,8 @@ class DLPScannerApp(ctk.CTk):
 
         def worker():
             try:
-                dbs = DBScanner.list_databases(payload["host"], payload["port"], payload["user"], payload["pwd"])
+                first_target = self._build_db_targets(payload)[0]
+                dbs = DBScanner.list_databases(first_target.host, first_target.port, payload["user"], payload["pwd"])
 
                 def apply_result():
                     values = [ALL_DATABASES_LABEL] + dbs
@@ -353,8 +396,7 @@ class DLPScannerApp(ctk.CTk):
                 self.current_summary = summary
                 self._display_results(summary)
             elif mode == "DB":
-                summary = DBScanner(target_payload["host"], target_payload["port"],
-                                    target_payload["user"], target_payload["pwd"], target_payload["db"]).scan()
+                summary = self._scan_db_payload(target_payload)
                 self.current_summary = summary
                 self._display_results(summary)
             elif mode == "WEB":
@@ -386,7 +428,7 @@ class DLPScannerApp(ctk.CTk):
         if db_payload.get("user") and db_payload.get("pwd"):
             tasks.append((
                 "数据库文本字段审计",
-                lambda: DBScanner(db_payload["host"], db_payload["port"], db_payload["user"], db_payload["pwd"], db_payload.get("db", "")).scan()
+                lambda: self._scan_db_payload(db_payload)
             ))
 
         if payload.get("file"):
