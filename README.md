@@ -26,8 +26,8 @@ DLP Inspector 是一个轻量级保密审计自查工具原型，用于在授权
 
 - 支持使用标准凭证连接 MySQL / MariaDB。
 - 支持自动获取用户数据库列表，可选择单个数据库，也可选择全部用户库。
-- 核心扫描器支持多个授权数据库目标的批量并发审计；GUI 主机输入框可用英文逗号或分号分隔多个 host，也可导入 JSON / CSV 目标列表。
-- 目标列表可为每个数据库目标配置独立 `host`、`port`、`user`、`database`、`label`，并支持通过 `password_env` 从环境变量读取密码，避免在样例文件中保存真实凭据。
+- 核心扫描器支持多个授权数据库目标的批量并发审计；GUI 主机输入框可用英文逗号或分号分隔多个 host，也可导入 JSON / CSV 数据库连接列表。
+- 连接列表可为每个数据库连接配置独立 `host`、`port`、`user`、`database`、`label`，并支持通过 `password_env` 从环境变量读取密码，避免在样例文件中保存真实凭据。
 - 遍历目标库内数据表，并提取文本类型字段进行敏感内容审计。
 - 记录命中特征、库名、表名、字段名、行位置和上下文片段。
 - 数据库文本字段采用分批读取；当表存在单列主键时优先使用主键游标分页，否则回退到 `LIMIT / OFFSET`。
@@ -143,11 +143,11 @@ pip install -r requirements-base.txt
 - **all_errors**：所有子任务的异常明细。
 - **子任务 summary**：各扫描模块的独立统计信息。
 
-HTML 摘要报告包含总览统计、分模块统计、风险等级分布、来源类型分布、Top 规则命中、高风险明细 Top 100、异常摘要 Top 100、Web 页面快照、快照复核结果和数据库目标摘要；页面内提供搜索、风险等级筛选、来源筛选、表格排序、Tab 切换和章节跳转，完整明细仍以同目录 Excel 文件为准。
+HTML 摘要报告包含总览统计、分模块统计、风险等级分布、来源类型分布、Top 规则命中、高风险明细 Top 100、异常摘要 Top 100、Web 页面快照、快照复核结果和数据库连接摘要；页面内提供搜索、风险等级筛选、来源筛选、表格排序、Tab 切换和章节跳转，完整明细仍以同目录 Excel 文件为准。
 
 ## 可复现实验
 
-仓库提供了小型样例数据和本地验证脚本，用于验证文件扫描、规则命中和报告导出闭环；数据库目标列表格式可参考 `sample_data/db_targets.example.json`，其中只包含演示 host 和环境变量名，不包含真实密码：
+仓库提供了小型样例数据和本地验证脚本，用于验证文件扫描、规则命中和报告导出闭环；数据库连接列表格式可参考 `sample_data/db_targets.example.json`，其中只包含演示 host 和环境变量名，不包含真实密码：
 
 ```bash
 python scripts/smoke_scan.py
@@ -169,7 +169,7 @@ python -B -m pytest -q
 python -B scripts/smoke_scan.py --no-report
 ```
 
-测试覆盖规则加载与模糊正则、文件 smoke、Web 同域 BFS、页面快照哈希复核、快照 JSON 解析、数据库目标文件解析、主键游标分页、数据库分页 mock、多数据库目标合并、异常路径、Excel sheet/字段结构，以及 HTML 摘要报告关键区块。OCR、真实 MySQL 和 Windows COM 保留为默认跳过的可选集成测试。详细说明见 [docs/testing.md](docs/testing.md)。
+测试覆盖规则加载与模糊正则、文件 smoke、Web 同域 BFS、页面快照哈希复核、快照 JSON 解析、数据库连接列表解析、主键游标分页、数据库分页 mock、多数据库目标合并、异常路径、Excel sheet/字段结构，以及 HTML 摘要报告关键区块。OCR、真实 MySQL 和 Windows COM 保留为默认跳过的可选集成测试。详细说明见 [docs/testing.md](docs/testing.md)。
 
 ## 打包说明
 

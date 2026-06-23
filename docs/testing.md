@@ -23,7 +23,7 @@ python -B scripts/smoke_scan.py --no-report
 - 仓库内三个文本样例的文件 smoke。
 - 文件不存在、解析器异常及异常来源路径留痕。
 - Web 静态页面的同域 BFS、深度限制、页面快照哈希复核、快照 JSON 解析和请求异常留痕。
-- MySQL 文本字段扫描的目标文件解析、主键游标分页、`LIMIT / OFFSET` 分页调用、跨页行号和多数据库目标合并。
+- MySQL 文本字段扫描的连接列表解析、主键游标分页、`LIMIT / OFFSET` 分页调用、跨页行号和多数据库目标合并。
 - `summary`、`high_risk_findings`、`findings`、`errors` 等 Excel sheet 及字段结构。
 - HTML 摘要报告的总览、风险分布、来源筛选、Tab、排序、高风险明细和异常摘要等关键区块。
 - 不安装 PaddleOCR 时，`core.image_scanner` 模块仍可导入。

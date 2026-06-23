@@ -95,7 +95,7 @@ class DLPScannerApp(ctk.CTk):
         self.db_name.pack(side="left", padx=5)
         self.db_fetch_btn = ctk.CTkButton(self.db_input_frame, text="获取库名", width=80, height=40, command=self.fetch_databases)
         self.db_fetch_btn.pack(side="left", padx=5)
-        self.db_targets_btn = ctk.CTkButton(self.db_input_frame, text="导入目标", width=80, height=40, command=lambda: self.import_db_targets("single"))
+        self.db_targets_btn = ctk.CTkButton(self.db_input_frame, text="导入连接", width=80, height=40, command=lambda: self.import_db_targets("single"))
         self.db_targets_btn.pack(side="left", padx=(5, 10))
         self.db_entries = [self.db_host, self.db_port, self.db_user, self.db_pass, self.db_name]
 
@@ -114,7 +114,7 @@ class DLPScannerApp(ctk.CTk):
         self.all_db_name = ctk.CTkComboBox(self.all_input_frame, values=[ALL_DATABASES_LABEL], width=180, height=34)
         self.all_db_name.set(ALL_DATABASES_LABEL)
         self.all_db_fetch_btn = ctk.CTkButton(self.all_input_frame, text="获取库名", width=80, height=34, command=self.fetch_databases_for_all)
-        self.all_db_targets_btn = ctk.CTkButton(self.all_input_frame, text="导入DB目标", width=90, height=34, command=lambda: self.import_db_targets("all"))
+        self.all_db_targets_btn = ctk.CTkButton(self.all_input_frame, text="导入连接列表", width=90, height=34, command=lambda: self.import_db_targets("all"))
         self.all_db_host.grid(row=2, column=0, sticky="ew", padx=4, pady=3)
         self.all_db_port.grid(row=2, column=1, sticky="ew", padx=4, pady=3)
         self.all_db_user.grid(row=3, column=0, sticky="ew", padx=4, pady=3)
@@ -286,7 +286,7 @@ class DLPScannerApp(ctk.CTk):
 
     def import_db_targets(self, prefix: str):
         file_path = filedialog.askopenfilename(
-            title="选择数据库目标列表",
+            title="选择数据库连接列表(JSON/CSV，不是SQL文件)",
             filetypes=[
                 ("DB target files", "*.json *.csv"),
                 ("JSON files", "*.json"),
@@ -301,7 +301,7 @@ class DLPScannerApp(ctk.CTk):
             self.all_db_target_file = file_path
         else:
             self.db_target_file = file_path
-        self.log_to_terminal(f"已导入数据库目标列表: {file_path}")
+        self.log_to_terminal(f"已导入数据库连接列表(JSON/CSV): {file_path}")
 
     def fetch_databases(self):
         payload = self._get_db_payload("single")
