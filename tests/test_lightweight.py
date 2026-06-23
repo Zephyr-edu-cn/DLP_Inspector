@@ -17,6 +17,7 @@ from core.file_scanner import FileScanner
 from core.web_scanner import WebScanner
 from models.data_models import ScanResult, ScanSummary
 from report.report_manager import ReportManager
+from scripts.web_snapshot_review import load_snapshot_file
 from utils.regex_utils import compile_rules, load_rules
 
 
@@ -239,6 +240,8 @@ class _PagingCursor:
     def fetchall(self):
         if self.query == "SHOW TABLES":
             return [{"Tables_in_demo": "documents"}]
+        if "COLUMN_KEY = 'PRI'" in self.query:
+            return []
         if "information_schema.COLUMNS" in self.query:
             return [{"COLUMN_NAME": "content"}]
         if " LIMIT %s OFFSET %s" in self.query:
@@ -271,7 +274,95 @@ class _PagingConnection:
         self.open = False
 
 
+
+
+class _KeysetCursor:
+    def __init__(self):
+        self.query = ""
+        self.params = None
+        self.keyset_calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return False
+
+    def execute(self, query, params=None):
+        self.query = " ".join(query.split())
+        self.params = params
+        if "ORDER BY `id` ASC LIMIT %s" in self.query:
+            self.keyset_calls.append(tuple(params))
+
+    def fetchall(self):
+        if self.query == "SHOW TABLES":
+            return [{"Tables_in_demo": "documents"}]
+        if "COLUMN_KEY = 'PRI'" in self.query:
+            return [{"COLUMN_NAME": "id"}]
+        if "information_schema.COLUMNS" in self.query:
+            return [{"COLUMN_NAME": "content"}]
+        if "ORDER BY `id` ASC LIMIT %s" in self.query:
+            pages = {
+                (2,): [
+                    {"__dlp_pk": 1, "content": "公开内容"},
+                    {"__dlp_pk": 3, "content": "包含涉密材料"},
+                ],
+                (3, 2): [],
+            }
+            return pages[tuple(self.params)]
+        return []
+
+    def fetchone(self):
+        if self.query.startswith("SELECT COUNT(*)"):
+            return {"count": 2}
+        return None
+
+
+class _KeysetConnection:
+    def __init__(self):
+        self.open = True
+        self.cursor_instance = _KeysetCursor()
+
+    def cursor(self):
+        return self.cursor_instance
+
+    def close(self):
+        self.open = False
+
 class DatabasePaginationTests(unittest.TestCase):
+    def test_targets_load_from_json_and_password_env(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_file = Path(temp_dir) / "db_targets.json"
+            target_file.write_text(json.dumps({
+                "targets": [
+                    {
+                        "label": "target-a",
+                        "host": "db-a.example",
+                        "port": 3307,
+                        "user": "reader_a",
+                        "password_env": "DLP_TEST_DB_PASSWORD",
+                        "database": "demo_a",
+                    },
+                    {
+                        "label": "target-b",
+                        "host": "db-b.example",
+                        "database": "demo_b",
+                    },
+                ]
+            }), encoding="utf-8")
+
+            with patch.dict("os.environ", {"DLP_TEST_DB_PASSWORD": "env-secret"}):
+                targets = DBScanner.load_targets_from_file(
+                    target_file,
+                    default_user="fallback_reader",
+                    default_password="fallback-secret",
+                )
+
+        self.assertEqual(len(targets), 2)
+        self.assertEqual(targets[0].password, "env-secret")
+        self.assertEqual(targets[1].user, "fallback_reader")
+        self.assertEqual(targets[1].password, "fallback-secret")
+
     def test_multiple_targets_are_merged_with_metadata(self):
         def fake_scan(scanner):
             return ScanSummary(
@@ -308,6 +399,28 @@ class DatabasePaginationTests(unittest.TestCase):
             {target["host"] for target in summary.metadata["db_targets"]},
             {"db-a.example", "db-b.example"},
         )
+
+    def test_text_fields_prefer_keyset_when_single_primary_key_exists(self):
+        connection = _KeysetConnection()
+        scanner = DBScanner(
+            "localhost",
+            3306,
+            "audit_user",
+            "demo_password",
+            database="demo",
+            batch_size=2,
+        )
+        with patch.object(scanner, "_connect", return_value=connection):
+            summary = scanner.scan()
+
+        self.assertEqual(connection.cursor_instance.keyset_calls, [(2,), (3, 2)])
+        self.assertFalse(connection.open)
+        self.assertEqual(summary.total_scanned, 1)
+        self.assertTrue(any(
+            result.line_number == "主键[id=3] - 字段[content]"
+            and result.rule_id == "CONF_KEYWORD_SENSITIVE"
+            for result in summary.results
+        ))
 
     def test_text_fields_are_read_in_pages(self):
         connection = _PagingConnection()
@@ -440,11 +553,27 @@ class ReportStructureTests(unittest.TestCase):
                         "total_findings": 0,
                         "total_errors": 0,
                     }],
+                    "web_snapshot_diff": [{
+                        "url": "https://audit.example/",
+                        "status": "changed",
+                        "old_sha256": "abc",
+                        "new_sha256": "def",
+                        "fetched_at": "2026-06-23T12:01:00",
+                        "error_msg": "",
+                    }],
                 },
             )
             metadata_sheets = manager._build_report_sheets(metadata_summary)
             self.assertIn("web_snapshots", metadata_sheets)
             self.assertIn("db_targets", metadata_sheets)
+            self.assertIn("web_snapshot_diff", metadata_sheets)
+
+            snapshot_json = manager.generate_web_snapshot_json(
+                metadata_summary,
+                str(Path(temp_dir) / "synthetic.xlsx"),
+            )
+            loaded_snapshots = load_snapshot_file(Path(snapshot_json))
+            self.assertEqual(loaded_snapshots[0]["url"], "https://audit.example/")
 
             with patch.object(
                 manager,
@@ -523,6 +652,9 @@ class ReportStructureTests(unittest.TestCase):
             "页面快照与数据库目标",
             "reportSearch",
             "riskFilter",
+            "sourceFilter",
+            "tab-button",
+            "sortTable",
             'data-risk="error"',
             "完整明细见同目录 Excel 文件",
             "SYSTEM_HIDDEN_FILE",

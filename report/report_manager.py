@@ -1,4 +1,5 @@
 # report/report_manager.py
+import json
 import os
 import re
 import zipfile
@@ -64,6 +65,30 @@ class ReportManager:
         except Exception as e:
             print(f"\n生成综合报告时发生错误: {e}")
             return ""
+
+    def generate_web_snapshot_json(self, summaries: list[ScanSummary] | ScanSummary,
+                                   excel_path: str | None = None) -> str:
+        """Export Web snapshot metadata for later point-in-time verification."""
+        if isinstance(summaries, ScanSummary):
+            summaries = [summaries]
+
+        snapshots = []
+        for summary in summaries:
+            for snapshot in summary.metadata.get("web_snapshots", []):
+                snapshots.append({"task_name": summary.task_name, **snapshot})
+
+        if not snapshots:
+            return ""
+
+        json_path = self._snapshot_json_path_for(excel_path)
+        payload = {
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "snapshot_count": len(snapshots),
+            "snapshots": snapshots,
+        }
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        return os.path.abspath(json_path)
 
     def generate_html_report(self, summary: ScanSummary, excel_path: str | None = None) -> str:
         """生成单任务 HTML 摘要报告。Excel 仍作为完整明细归档。"""
@@ -277,6 +302,15 @@ class ReportManager:
             "total_errors",
             "error_msg",
         ]]
+        diff_rows = [[
+            "task_name",
+            "url",
+            "status",
+            "old_sha256",
+            "new_sha256",
+            "fetched_at",
+            "error_msg",
+        ]]
 
         for summary in summaries:
             for snapshot in summary.metadata.get("web_snapshots", []):
@@ -306,11 +340,23 @@ class ReportManager:
                     target.get("total_errors", ""),
                     target.get("error_msg", ""),
                 ])
+            for item in summary.metadata.get("web_snapshot_diff", []):
+                diff_rows.append([
+                    summary.task_name,
+                    item.get("url", ""),
+                    item.get("status", ""),
+                    item.get("old_sha256", ""),
+                    item.get("new_sha256", ""),
+                    item.get("fetched_at", ""),
+                    item.get("error_msg", ""),
+                ])
 
         if len(web_rows) > 1:
             sheets["web_snapshots"] = web_rows
         if len(db_rows) > 1:
             sheets["db_targets"] = db_rows
+        if len(diff_rows) > 1:
+            sheets["web_snapshot_diff"] = diff_rows
         return sheets
 
     def _write_with_pandas(self, file_path: str, sheets: dict[str, list[list[object]]]) -> None:
@@ -574,7 +620,12 @@ class ReportManager:
             if risk_counts.get(risk, 0)
         ]
         web_snapshot_rows = self._web_snapshot_rows_for_html(summaries)
+        web_diff_rows = self._web_diff_rows_for_html(summaries)
         db_target_rows = self._db_target_rows_for_html(summaries)
+        source_rows = [
+            [source_type, count]
+            for source_type, count in Counter(res.source_type for res in all_results).most_common()
+        ]
 
         excel_note = (
             f"完整明细见同目录 Excel 文件：{html_escape(os.path.basename(excel_path))}"
@@ -599,6 +650,10 @@ class ReportManager:
     .cards {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }}
     .toolbar {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin: 16px 0; position: sticky; top: 0; z-index: 5; }}
     .toolbar input, .toolbar select {{ border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 10px; font-size: 14px; }}
+    .tabs {{ display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }}
+    .tab-button {{ border: 1px solid #cbd5e1; background: #ffffff; color: #334155; border-radius: 6px; padding: 8px 10px; cursor: pointer; }}
+    .tab-button.active {{ background: #0f172a; color: #ffffff; border-color: #0f172a; }}
+    section[data-panel].panel-hidden {{ display: none; }}
     .toolbar input {{ min-width: 260px; flex: 1; }}
     .toolbar a {{ color: #2563eb; text-decoration: none; font-size: 13px; }}
     .quick-nav {{ display: flex; flex-wrap: wrap; gap: 8px; }}
@@ -612,6 +667,7 @@ class ReportManager:
     table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
     th, td {{ border-bottom: 1px solid #e5e7eb; padding: 8px 10px; text-align: left; vertical-align: top; word-break: break-word; }}
     th {{ background: #f1f5f9; color: #334155; font-weight: 700; }}
+    th.sortable {{ cursor: pointer; user-select: none; }}
     tr.critical td {{ background: #fff1f2; }}
     tr.high td {{ background: #fff7ed; }}
     tr.medium td {{ background: #fefce8; }}
@@ -643,6 +699,14 @@ class ReportManager:
         <option value="low">low</option>
         <option value="error">error</option>
       </select>
+      <select id="sourceFilter" aria-label="来源类型筛选">
+        <option value="">全部来源</option>
+        <option value="FILE">FILE</option>
+        <option value="DB">DB</option>
+        <option value="WEB">WEB</option>
+        <option value="IMAGE">IMAGE</option>
+        <option value="TASK">TASK</option>
+      </select>
       <div class="quick-nav">
         <a href="#module-stats">分模块</a>
         <a href="#risk-dist">风险分布</a>
@@ -652,32 +716,48 @@ class ReportManager:
         <a href="#snapshots">快照/DB</a>
       </div>
     </div>
-    <section id="module-stats">
+    <div class="tabs">
+      <button class="tab-button active" data-panel-target="overview">总览</button>
+      <button class="tab-button" data-source-target="FILE">文件</button>
+      <button class="tab-button" data-source-target="DB">数据库</button>
+      <button class="tab-button" data-source-target="WEB">Web</button>
+      <button class="tab-button" data-source-target="IMAGE">OCR</button>
+      <button class="tab-button" data-panel-target="high">高风险</button>
+      <button class="tab-button" data-panel-target="errors">异常</button>
+      <button class="tab-button" data-panel-target="snapshots">快照复核</button>
+    </div>
+    <section id="module-stats" data-panel="overview">
       <h2>分模块统计</h2>
       {self._html_table(["任务", "扫描对象", "命中", "异常", "细分统计"], task_rows)}
     </section>
-    <section id="risk-dist">
+    <section id="source-top" data-panel="overview">
+      <h2>来源类型分布</h2>
+      {self._html_table(["来源类型", "记录数"], source_rows)}
+    </section>
+    <section id="risk-dist" data-panel="overview">
       <h2>风险等级分布</h2>
       {self._html_table(["风险等级", "命中数"], risk_rows)}
     </section>
-    <section id="rule-top">
+    <section id="rule-top" data-panel="overview">
       <h2>规则命中 Top 20</h2>
       {self._html_table(["规则 ID", "规则名称", "命中数"], top_rule_rows)}
     </section>
-    <section id="high-risk">
+    <section id="high-risk" data-panel="high">
       <h2>高风险明细（前 100 条）</h2>
       {self._html_result_table(high_risk_rows)}
     </section>
-    <section id="errors">
+    <section id="errors" data-panel="errors">
       <h2>异常摘要（前 100 条）</h2>
       {self._html_table(["任务", "来源类型", "路径/URL/对象", "位置", "特征", "异常信息"], error_rows, risk_col=6)}
     </section>
-    <section id="snapshots">
+    <section id="snapshots" data-panel="snapshots">
       <h2>页面快照与数据库目标</h2>
       <h3>Web 页面快照</h3>
-      {self._html_table(["任务", "URL", "深度", "状态码", "标题", "文本 SHA-256", "文本长度", "抓取时间", "异常"], web_snapshot_rows, risk_col=8)}
+      {self._html_table(["任务", "URL", "深度", "状态码", "标题", "文本 SHA-256", "文本长度", "抓取时间", "异常"], web_snapshot_rows, risk_col=8, source_hint="WEB")}
+      <h3>Web 快照复核</h3>
+      {self._html_table(["任务", "URL", "状态", "旧 SHA-256", "新 SHA-256", "复核时间", "异常信息"], web_diff_rows, risk_col=2, source_hint="WEB")}
       <h3>数据库目标</h3>
-      {self._html_table(["任务", "标签", "Host", "Port", "Database", "User", "状态", "扫描表数", "命中数", "异常数", "异常信息"], db_target_rows, risk_col=6)}
+      {self._html_table(["任务", "标签", "Host", "Port", "Database", "User", "状态", "扫描表数", "命中数", "异常数", "异常信息"], db_target_rows, risk_col=6, source_hint="DB")}
     </section>
     <section>
       <h2>报告说明</h2>
@@ -689,19 +769,65 @@ class ReportManager:
     (function() {{
       const searchInput = document.getElementById('reportSearch');
       const riskFilter = document.getElementById('riskFilter');
+      const sourceFilter = document.getElementById('sourceFilter');
+      let activePanel = '';
       function applyFilters() {{
         const query = (searchInput.value || '').toLowerCase().trim();
         const risk = (riskFilter.value || '').toLowerCase();
+        const source = (sourceFilter.value || '').toUpperCase();
+        document.querySelectorAll('section[data-panel]').forEach(function(section) {{
+          section.classList.toggle('panel-hidden', !!activePanel && section.dataset.panel !== activePanel);
+        }});
         document.querySelectorAll('tbody tr').forEach(function(row) {{
           const haystack = (row.dataset.search || row.innerText || '').toLowerCase();
           const rowRisk = (row.dataset.risk || '').toLowerCase();
+          const rowSource = (row.dataset.source || '').toUpperCase();
           const matchesText = !query || haystack.indexOf(query) !== -1;
           const matchesRisk = !risk || rowRisk === risk;
-          row.classList.toggle('hidden-row', !(matchesText && matchesRisk));
+          const matchesSource = !source || rowSource === source;
+          row.classList.toggle('hidden-row', !(matchesText && matchesRisk && matchesSource));
         }});
       }}
+      function sortTable(table, columnIndex) {{
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const asc = table.dataset.sortColumn !== String(columnIndex) || table.dataset.sortDir === 'desc';
+        rows.sort(function(a, b) {{
+          const av = (a.children[columnIndex] ? a.children[columnIndex].innerText : '').trim();
+          const bv = (b.children[columnIndex] ? b.children[columnIndex].innerText : '').trim();
+          const an = Number(av), bn = Number(bv);
+          if (!Number.isNaN(an) && !Number.isNaN(bn)) return asc ? an - bn : bn - an;
+          return asc ? av.localeCompare(bv, 'zh-Hans-CN') : bv.localeCompare(av, 'zh-Hans-CN');
+        }});
+        rows.forEach(function(row) {{ tbody.appendChild(row); }});
+        table.dataset.sortColumn = String(columnIndex);
+        table.dataset.sortDir = asc ? 'asc' : 'desc';
+      }}
+      document.querySelectorAll('th').forEach(function(th, index) {{
+        th.classList.add('sortable');
+        th.addEventListener('click', function() {{
+          const table = th.closest('table');
+          const columnIndex = Array.from(th.parentNode.children).indexOf(th);
+          sortTable(table, columnIndex);
+        }});
+      }});
+      document.querySelectorAll('.tab-button').forEach(function(button) {{
+        button.addEventListener('click', function() {{
+          document.querySelectorAll('.tab-button').forEach(function(btn) {{ btn.classList.remove('active'); }});
+          button.classList.add('active');
+          if (button.dataset.sourceTarget) {{
+            activePanel = '';
+            sourceFilter.value = button.dataset.sourceTarget;
+          }} else {{
+            activePanel = button.dataset.panelTarget || '';
+            sourceFilter.value = '';
+          }}
+          applyFilters();
+        }});
+      }});
       searchInput.addEventListener('input', applyFilters);
       riskFilter.addEventListener('change', applyFilters);
+      sourceFilter.addEventListener('change', applyFilters);
     }})();
   </script>
 </body>
@@ -722,6 +848,21 @@ class ReportManager:
                     snapshot.get("text_chars", ""),
                     snapshot.get("fetched_at", ""),
                     "error" if snapshot.get("error_msg") else "",
+                ])
+        return rows[:100]
+
+    def _web_diff_rows_for_html(self, summaries: list[ScanSummary]) -> list[list[object]]:
+        rows: list[list[object]] = []
+        for summary in summaries:
+            for item in summary.metadata.get("web_snapshot_diff", []):
+                rows.append([
+                    summary.task_name,
+                    item.get("url", ""),
+                    item.get("status", ""),
+                    item.get("old_sha256", ""),
+                    item.get("new_sha256", ""),
+                    item.get("fetched_at", ""),
+                    item.get("error_msg", ""),
                 ])
         return rows[:100]
 
@@ -779,7 +920,8 @@ class ReportManager:
         headers = ["任务", "来源类型", "路径/URL/对象", "位置", "风险等级", "规则 ID", "规则名称", "命中特征", "上下文", "异常信息"]
         return self._html_table(headers, rows, risk_col=4)
 
-    def _html_table(self, headers: list[str], rows: list[list[object]], risk_col: int | None = None) -> str:
+    def _html_table(self, headers: list[str], rows: list[list[object]], risk_col: int | None = None,
+                    source_hint: str = "") -> str:
         if not rows:
             return '<p class="muted">无记录</p>'
         header_html = "".join(f"<th>{html_escape(str(header))}</th>" for header in headers)
@@ -796,9 +938,11 @@ class ReportManager:
             elif risk_col is not None and risk_col >= len(row):
                 risk_value = "error"
             row_text = " ".join(str(cell) for cell in row)
+            source_value = source_hint or self._infer_source_type(row)
             cells = "".join(f"<td>{html_escape(str(cell))}</td>" for cell in row)
             body_html.append(
                 f'<tr{row_class} data-risk="{html_escape(risk_value)}" '
+                f'data-source="{html_escape(source_value)}" '
                 f'data-search="{html_escape(row_text)}">{cells}</tr>'
             )
         return (
@@ -806,6 +950,19 @@ class ReportManager:
             f'<thead><tr>{header_html}</tr></thead><tbody>{"".join(body_html)}</tbody>'
             f'</table></div>'
         )
+
+    def _infer_source_type(self, row: list[object]) -> str:
+        for cell in row:
+            value = str(cell).upper()
+            if value in {"FILE", "DB", "WEB", "IMAGE", "TASK"}:
+                return value
+        return ""
+
+    def _snapshot_json_path_for(self, excel_path: str | None = None) -> str:
+        if excel_path:
+            return os.path.splitext(excel_path)[0] + "_web_snapshots.json"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return os.path.join(self.output_dir, f"DLP_Audit_web_snapshots_{timestamp}.json")
 
     def _format_openpyxl_sheet(self, worksheet, rows, header, Font, PatternFill, Alignment, FormulaRule) -> None:
         worksheet.freeze_panes = "A2"

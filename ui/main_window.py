@@ -7,7 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import customtkinter as ctk
-from tkinter import messagebox, simpledialog
+from tkinter import filedialog, messagebox, simpledialog
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
@@ -40,6 +40,8 @@ class DLPScannerApp(ctk.CTk):
         self.current_summary: ScanSummary | None = None
         self.current_summaries: list[ScanSummary] | None = None
         self.password_prompt_lock = threading.Lock()
+        self.db_target_file = ""
+        self.all_db_target_file = ""
 
         # ==================== 左侧导航栏 ====================
         self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=0)
@@ -92,7 +94,9 @@ class DLPScannerApp(ctk.CTk):
         self.db_name.set(ALL_DATABASES_LABEL)
         self.db_name.pack(side="left", padx=5)
         self.db_fetch_btn = ctk.CTkButton(self.db_input_frame, text="获取库名", width=80, height=40, command=self.fetch_databases)
-        self.db_fetch_btn.pack(side="left", padx=(5, 10))
+        self.db_fetch_btn.pack(side="left", padx=5)
+        self.db_targets_btn = ctk.CTkButton(self.db_input_frame, text="导入目标", width=80, height=40, command=lambda: self.import_db_targets("single"))
+        self.db_targets_btn.pack(side="left", padx=(5, 10))
         self.db_entries = [self.db_host, self.db_port, self.db_user, self.db_pass, self.db_name]
 
         # 综合检查输入区：四类任务可一次填写，后台并发调度
@@ -110,12 +114,14 @@ class DLPScannerApp(ctk.CTk):
         self.all_db_name = ctk.CTkComboBox(self.all_input_frame, values=[ALL_DATABASES_LABEL], width=180, height=34)
         self.all_db_name.set(ALL_DATABASES_LABEL)
         self.all_db_fetch_btn = ctk.CTkButton(self.all_input_frame, text="获取库名", width=80, height=34, command=self.fetch_databases_for_all)
+        self.all_db_targets_btn = ctk.CTkButton(self.all_input_frame, text="导入DB目标", width=90, height=34, command=lambda: self.import_db_targets("all"))
         self.all_db_host.grid(row=2, column=0, sticky="ew", padx=4, pady=3)
         self.all_db_port.grid(row=2, column=1, sticky="ew", padx=4, pady=3)
         self.all_db_user.grid(row=3, column=0, sticky="ew", padx=4, pady=3)
         self.all_db_pass.grid(row=3, column=1, sticky="ew", padx=4, pady=3)
         self.all_db_name.grid(row=4, column=0, sticky="ew", padx=4, pady=3)
         self.all_db_fetch_btn.grid(row=4, column=1, sticky="ew", padx=4, pady=3)
+        self.all_db_targets_btn.grid(row=5, column=0, columnspan=2, sticky="ew", padx=4, pady=3)
         self.all_input_frame.grid_columnconfigure(0, weight=1)
         self.all_input_frame.grid_columnconfigure(1, weight=1)
         self.all_entries = [self.all_web, self.all_file, self.all_image, self.all_db_host, self.all_db_port,
@@ -219,15 +225,24 @@ class DLPScannerApp(ctk.CTk):
             user = self.all_db_user.get().strip()
             pwd = self.all_db_pass.get().strip()
             db = self._db_selection_to_database(self.all_db_name.get())
+            target_file = self.all_db_target_file
         else:
             host = self.db_host.get().strip() or "localhost"
             port = self.db_port.get().strip() or "3306"
             user = self.db_user.get().strip()
             pwd = self.db_pass.get().strip()
             db = self._db_selection_to_database(self.db_name.get())
-        return {"host": host, "port": port, "user": user, "pwd": pwd, "db": db}
+            target_file = self.db_target_file
+        return {"host": host, "port": port, "user": user, "pwd": pwd, "db": db, "target_file": target_file}
 
     def _build_db_targets(self, payload: dict) -> list[DBScanTarget]:
+        if payload.get("target_file"):
+            return DBScanner.load_targets_from_file(
+                payload["target_file"],
+                default_user=payload.get("user", ""),
+                default_password=payload.get("pwd", ""),
+                default_port=int(payload.get("port", "3306") or 3306),
+            )
         host_items = [part.strip() for part in re.split(r"[,;\n]+", payload.get("host", "")) if part.strip()]
         if not host_items:
             host_items = ["localhost"]
@@ -268,6 +283,25 @@ class DLPScannerApp(ctk.CTk):
             ).scan()
         self.log_to_terminal(f"DB batch audit targets: {len(targets)}; submitting text-field scans concurrently.")
         return DBScanner.scan_targets(targets, max_workers=min(4, len(targets)))
+
+    def import_db_targets(self, prefix: str):
+        file_path = filedialog.askopenfilename(
+            title="选择数据库目标列表",
+            filetypes=[
+                ("DB target files", "*.json *.csv"),
+                ("JSON files", "*.json"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*"),
+            ],
+            parent=self,
+        )
+        if not file_path:
+            return
+        if prefix == "all":
+            self.all_db_target_file = file_path
+        else:
+            self.db_target_file = file_path
+        self.log_to_terminal(f"已导入数据库目标列表: {file_path}")
 
     def fetch_databases(self):
         payload = self._get_db_payload("single")
@@ -354,7 +388,7 @@ class DLPScannerApp(ctk.CTk):
 
     def _lock_ui(self):
         self.scan_btn.configure(state="disabled", text="引擎运转中...")
-        for widget in [self.path_entry, self.db_fetch_btn, self.all_db_fetch_btn, self.reset_keyword_btn]:
+        for widget in [self.path_entry, self.db_fetch_btn, self.all_db_fetch_btn, self.db_targets_btn, self.all_db_targets_btn, self.reset_keyword_btn]:
             widget.configure(state="disabled")
         for entry in self.db_entries + self.all_entries + [self.keyword_entry, self.regex_entry]:
             entry.configure(state="disabled")
@@ -363,7 +397,7 @@ class DLPScannerApp(ctk.CTk):
 
     def _unlock_ui(self):
         self.scan_btn.configure(state="normal", text="▶ 启动核查引擎")
-        for widget in [self.path_entry, self.db_fetch_btn, self.all_db_fetch_btn, self.reset_keyword_btn]:
+        for widget in [self.path_entry, self.db_fetch_btn, self.all_db_fetch_btn, self.db_targets_btn, self.all_db_targets_btn, self.reset_keyword_btn]:
             widget.configure(state="normal")
         for entry in self.db_entries + self.all_entries + [self.keyword_entry, self.regex_entry]:
             entry.configure(state="normal")
@@ -559,6 +593,7 @@ class DLPScannerApp(ctk.CTk):
                 else:
                     report_path = reporter.generate_excel_report(summaries[0])
                     html_path = reporter.generate_html_report(summaries[0], report_path) if report_path else ""
+                snapshot_path = reporter.generate_web_snapshot_json(summaries, report_path) if report_path else ""
 
                 def finish_success():
                     if report_path:
@@ -566,6 +601,8 @@ class DLPScannerApp(ctk.CTk):
                         self.log_to_terminal(f"Excel 明细报告: {report_path}")
                         if html_path:
                             self.log_to_terminal(f"HTML 摘要报告: {html_path}")
+                        if snapshot_path:
+                            self.log_to_terminal(f"Web 快照复核文件: {snapshot_path}")
                         self.export_btn.configure(text="报告已导出", state="disabled")
                         self.after(2000, lambda: self.export_btn.configure(text="导出审计报告", state="normal"))
                     else:

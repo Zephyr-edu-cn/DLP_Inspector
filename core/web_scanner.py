@@ -119,6 +119,7 @@ class WebScanner:
         refreshed_snapshots: list[dict[str, object]] = []
         changed_count = 0
         error_count = 0
+        diff_items: list[dict[str, object]] = []
 
         for snapshot in snapshots:
             url = str(snapshot.get("url", "")).strip()
@@ -136,7 +137,9 @@ class WebScanner:
                 refreshed_snapshots.append(current_snapshot)
                 old_hash = str(snapshot.get("text_sha256", ""))
                 new_hash = str(current_snapshot.get("text_sha256", ""))
+                status = "unchanged"
                 if old_hash and new_hash and old_hash != new_hash:
+                    status = "changed"
                     changed_count += 1
                     results.append(ScanResult(
                         source_type="WEB",
@@ -149,10 +152,27 @@ class WebScanner:
                         risk_level="medium",
                         rule_description="复核时静态页面文本哈希与首次扫描不一致，建议重新审计该页面。",
                     ))
+                diff_items.append({
+                    "url": url,
+                    "status": status,
+                    "old_sha256": old_hash,
+                    "new_sha256": new_hash,
+                    "fetched_at": current_snapshot.get("fetched_at", ""),
+                    "error_msg": "",
+                })
             except Exception as e:
                 error_count += 1
                 message = f"页面快照复核失败: {e}"
-                refreshed_snapshots.append(self._build_error_snapshot(url, int(snapshot.get("depth", 0) or 0), message))
+                error_snapshot = self._build_error_snapshot(url, int(snapshot.get("depth", 0) or 0), message)
+                refreshed_snapshots.append(error_snapshot)
+                diff_items.append({
+                    "url": url,
+                    "status": "error",
+                    "old_sha256": str(snapshot.get("text_sha256", "")),
+                    "new_sha256": "",
+                    "fetched_at": error_snapshot.get("fetched_at", ""),
+                    "error_msg": message,
+                })
                 results.append(ScanResult(
                     source_type="WEB",
                     source_path=url,
@@ -176,8 +196,10 @@ class WebScanner:
                 "web_snapshot_verification": {
                     "changed_pages": changed_count,
                     "error_pages": error_count,
+                    "unchanged_pages": len([item for item in diff_items if item.get("status") == "unchanged"]),
                 },
                 "web_snapshots": refreshed_snapshots,
+                "web_snapshot_diff": diff_items,
             },
         )
 

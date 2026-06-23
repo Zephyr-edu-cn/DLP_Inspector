@@ -1,8 +1,12 @@
 # core/db_scanner.py
 from __future__ import annotations
 
+import csv
+import json
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pymysql
@@ -172,18 +176,71 @@ class DBScanner:
             },
         )
 
+    @classmethod
+    def load_targets_from_file(
+        cls,
+        target_file: str | Path,
+        default_user: str = "",
+        default_password: str = "",
+        default_port: int = 3306,
+    ) -> list[DBScanTarget]:
+        """Load authorized DB audit targets from JSON or CSV.
+
+        JSON accepts either a list or {"targets": [...]}.
+        CSV should contain host, port, user, password, database/db and label columns.
+        A password_env column can be used to avoid storing passwords in the file.
+        """
+        path = Path(target_file)
+        if not path.is_file():
+            raise ValueError(f"数据库目标文件不存在: {path}")
+
+        if path.suffix.lower() == ".json":
+            data = json.loads(path.read_text(encoding="utf-8"))
+            items = data.get("targets", data) if isinstance(data, dict) else data
+        elif path.suffix.lower() == ".csv":
+            with path.open("r", encoding="utf-8-sig", newline="") as f:
+                items = list(csv.DictReader(f))
+        else:
+            raise ValueError("数据库目标文件仅支持 .json 或 .csv")
+
+        if not isinstance(items, list):
+            raise ValueError("数据库目标文件格式错误：targets 必须是列表")
+
+        targets = [
+            cls._target_from_mapping(item, default_user, default_password, default_port)
+            for item in items
+            if isinstance(item, dict)
+        ]
+        targets = [target for target in targets if target.host and target.user]
+        if not targets:
+            raise ValueError("数据库目标文件中没有可用目标。")
+        return targets
+
     @staticmethod
-    def _normalize_target(target: DBScanTarget | dict[str, Any]) -> DBScanTarget:
+    def _target_from_mapping(
+        mapping: dict[str, Any],
+        default_user: str = "",
+        default_password: str = "",
+        default_port: int = 3306,
+    ) -> DBScanTarget:
+        password_env = str(mapping.get("password_env", "") or "").strip()
+        password = str(mapping.get("password", mapping.get("pwd", "")) or "")
+        if not password and password_env:
+            password = os.getenv(password_env, "")
+        return DBScanTarget(
+            host=str(mapping.get("host", "localhost") or "localhost").strip(),
+            port=int(mapping.get("port", default_port) or default_port),
+            user=str(mapping.get("user", default_user) or default_user),
+            password=password if password else default_password,
+            database=str(mapping.get("database", mapping.get("db", "")) or "").strip(),
+            label=str(mapping.get("label", "") or "").strip(),
+        )
+
+    @classmethod
+    def _normalize_target(cls, target: DBScanTarget | dict[str, Any]) -> DBScanTarget:
         if isinstance(target, DBScanTarget):
             return target
-        return DBScanTarget(
-            host=str(target.get("host", "localhost") or "localhost"),
-            port=int(target.get("port", 3306) or 3306),
-            user=str(target.get("user", "")),
-            password=str(target.get("password", target.get("pwd", ""))),
-            database=str(target.get("database", target.get("db", "")) or ""),
-            label=str(target.get("label", "") or ""),
-        )
+        return cls._target_from_mapping(target)
 
     def _connect(self, database: str | None = None):
         config = {
@@ -266,43 +323,97 @@ class DBScanner:
                     if not text_columns or row_count == 0:
                         continue
 
-                    cols_str = ", ".join([self._quote_identifier(col) for col in text_columns])
-                    offset = 0
-                    while True:
-                        cursor.execute(
-                            f"SELECT {cols_str} FROM {self._quote_identifier(table)} LIMIT %s OFFSET %s",
-                            (self.batch_size, offset)
-                        )
-                        rows = cursor.fetchall()
-                        if not rows:
-                            break
-
-                        for batch_row_idx, row_data in enumerate(rows, start=1):
-                            row_idx = offset + batch_row_idx
-                            for col_name, text_value in row_data.items():
-                                if text_value is None or str(text_value).strip() == "":
-                                    continue
-
-                                secrets_found = extract_secrets_from_text(str(text_value), col_name)
-                                for secret in secrets_found:
-                                    results.append(ScanResult(
-                                        source_type="DB",
-                                        source_path=table_key,
-                                        keyword=secret['keyword'],
-                                        line_number=f"第{row_idx}行 - 字段[{col_name}]",
-                                        context=secret['context'],
-                                        rule_id=secret.get('rule_id', ''),
-                                        rule_name=secret.get('rule_name', ''),
-                                        risk_level=secret.get('risk_level', ''),
-                                        rule_description=secret.get('rule_description', '')
-                                    ))
-
-                        offset += self.batch_size
+                    primary_keys = self._get_primary_key_columns(cursor, db_name, table)
+                    if len(primary_keys) == 1:
+                        self._scan_table_keyset(cursor, table, table_key, text_columns, primary_keys[0], results)
+                    else:
+                        self._scan_table_offset(cursor, table, table_key, text_columns, results)
         finally:
             if connection.open:
                 connection.close()
 
         return results, table_details
+
+    def _scan_table_offset(self, cursor, table: str, table_key: str,
+                           text_columns: list[str], results: list[ScanResult]) -> None:
+        cols_str = ", ".join([self._quote_identifier(col) for col in text_columns])
+        offset = 0
+        while True:
+            cursor.execute(
+                f"SELECT {cols_str} FROM {self._quote_identifier(table)} LIMIT %s OFFSET %s",
+                (self.batch_size, offset),
+            )
+            rows = cursor.fetchall()
+            if not rows:
+                break
+
+            for batch_row_idx, row_data in enumerate(rows, start=1):
+                row_idx = offset + batch_row_idx
+                for col_name in text_columns:
+                    self._append_text_findings(
+                        row_data.get(col_name),
+                        col_name,
+                        f"第{row_idx}行 - 字段[{col_name}]",
+                        table_key,
+                        results,
+                    )
+            offset += self.batch_size
+
+    def _scan_table_keyset(self, cursor, table: str, table_key: str,
+                           text_columns: list[str], pk_col: str,
+                           results: list[ScanResult]) -> None:
+        pk_expr = f"{self._quote_identifier(pk_col)} AS __dlp_pk"
+        cols_str = ", ".join([pk_expr] + [self._quote_identifier(col) for col in text_columns])
+        last_pk = None
+
+        while True:
+            where_clause = ""
+            params: tuple[object, ...] = (self.batch_size,)
+            if last_pk is not None:
+                where_clause = f" WHERE {self._quote_identifier(pk_col)} > %s"
+                params = (last_pk, self.batch_size)
+
+            cursor.execute(
+                f"SELECT {cols_str} FROM {self._quote_identifier(table)}"
+                f"{where_clause} ORDER BY {self._quote_identifier(pk_col)} ASC LIMIT %s",
+                params,
+            )
+            rows = cursor.fetchall()
+            if not rows:
+                break
+
+            for row_data in rows:
+                pk_value = row_data.get("__dlp_pk")
+                for col_name in text_columns:
+                    self._append_text_findings(
+                        row_data.get(col_name),
+                        col_name,
+                        f"主键[{pk_col}={pk_value}] - 字段[{col_name}]",
+                        table_key,
+                        results,
+                    )
+            last_pk = rows[-1].get("__dlp_pk")
+            if last_pk is None:
+                break
+
+    def _append_text_findings(self, text_value, col_name: str, location: str,
+                              table_key: str, results: list[ScanResult]) -> None:
+        if text_value is None or str(text_value).strip() == "":
+            return
+
+        secrets_found = extract_secrets_from_text(str(text_value), col_name)
+        for secret in secrets_found:
+            results.append(ScanResult(
+                source_type="DB",
+                source_path=table_key,
+                keyword=secret['keyword'],
+                line_number=location,
+                context=secret['context'],
+                rule_id=secret.get('rule_id', ''),
+                rule_name=secret.get('rule_name', ''),
+                risk_level=secret.get('risk_level', ''),
+                rule_description=secret.get('rule_description', ''),
+            ))
 
     def _table_key(self, db_name: str, table_name: str) -> str:
         table_key = f"{db_name}.{table_name}"
@@ -319,6 +430,19 @@ class DBScanner:
             WHERE TABLE_SCHEMA = %s
               AND TABLE_NAME = %s
               AND DATA_TYPE IN ('varchar', 'text', 'char', 'longtext', 'mediumtext', 'tinytext')
+        """
+        cursor.execute(query, (db_name, table_name))
+        return [row['COLUMN_NAME'] for row in cursor.fetchall()]
+
+    def _get_primary_key_columns(self, cursor, db_name, table_name) -> list[str]:
+        """Return primary key columns in ordinal order for keyset pagination."""
+        query = """
+            SELECT COLUMN_NAME
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = %s
+              AND TABLE_NAME = %s
+              AND COLUMN_KEY = 'PRI'
+            ORDER BY ORDINAL_POSITION
         """
         cursor.execute(query, (db_name, table_name))
         return [row['COLUMN_NAME'] for row in cursor.fetchall()]

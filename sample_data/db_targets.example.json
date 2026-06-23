@@ -1,0 +1,20 @@
+{
+  "targets": [
+    {
+      "label": "demo-local",
+      "host": "127.0.0.1",
+      "port": 3306,
+      "user": "audit_reader",
+      "password_env": "DLP_DEMO_DB_PASSWORD",
+      "database": "demo_confidentiality"
+    },
+    {
+      "label": "demo-remote",
+      "host": "db.example.test",
+      "port": 3306,
+      "user": "audit_reader",
+      "password_env": "DLP_DEMO_DB_PASSWORD",
+      "database": ""
+    }
+  ]
+}

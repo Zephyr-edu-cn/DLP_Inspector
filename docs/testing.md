@@ -22,10 +22,10 @@ python -B scripts/smoke_scan.py --no-report
 - `config/rules.json` 风格规则的加载、无效配置回退和关键词模糊正则编译。
 - 仓库内三个文本样例的文件 smoke。
 - 文件不存在、解析器异常及异常来源路径留痕。
-- Web 静态页面的同域 BFS、深度限制、页面快照哈希复核和请求异常留痕。
-- MySQL 文本字段扫描的 `LIMIT / OFFSET` 分页调用、跨页行号和多数据库目标合并。
+- Web 静态页面的同域 BFS、深度限制、页面快照哈希复核、快照 JSON 解析和请求异常留痕。
+- MySQL 文本字段扫描的目标文件解析、主键游标分页、`LIMIT / OFFSET` 分页调用、跨页行号和多数据库目标合并。
 - `summary`、`high_risk_findings`、`findings`、`errors` 等 Excel sheet 及字段结构。
-- HTML 摘要报告的总览、风险分布、高风险明细和异常摘要等关键区块。
+- HTML 摘要报告的总览、风险分布、来源筛选、Tab、排序、高风险明细和异常摘要等关键区块。
 - 不安装 PaddleOCR 时，`core.image_scanner` 模块仍可导入。
 
 轻量测试验证的是确定性流程和数据结构，不代表真实数据上的 precision、recall、F1，也不验证 PaddleOCR 模型精度、真实 MySQL 性能或 Windows Office 自动化兼容性。
